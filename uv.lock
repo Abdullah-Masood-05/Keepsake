@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = "==3.12.*"
 
 [[package]]
@@ -162,7 +162,7 @@ wheels = [
 
 [[package]]
 name = "youtube-video-downloader"
-version = "2.0.2"
+version = "2.0.3"
 source = { virtual = "." }
 dependencies = [
     { name = "pyqt6" },

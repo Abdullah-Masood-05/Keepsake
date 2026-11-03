@@ -1,7 +1,7 @@
 @echo off
 REM ============================================================
 REM  build.bat - Master build: Nuitka compile + Inno Setup
-REM  Produces: installer_output\YouTubeVideoDownloader-Setup-2.0.2.exe
+REM  Produces: installer_output\YouTubeVideoDownloader-Setup-2.0.3.exe
 REM ============================================================
 
 setlocal enabledelayedexpansion
@@ -11,7 +11,7 @@ cd /d "%~dp0"
 
 echo ============================================
 echo  YouTube Video Downloader - Build Pipeline
-echo  Version 2.0.2
+echo  Version 2.0.3
 echo ============================================
 echo.
 
@@ -19,7 +19,7 @@ REM --- Configuration ---
 set PYTHON=.venv\Scripts\python.exe
 set SCRIPT=main.py
 set EXE_NAME=YouTubeVideoDownloader
-set APP_VERSION=2.0.2.0
+set APP_VERSION=2.0.3.0
 set JOBS=%NUMBER_OF_PROCESSORS%
 set FFMPEG_DIR=ffmpeg
 
@@ -170,7 +170,7 @@ echo.
 echo ============================================
 echo  BUILD COMPLETE!
 echo.
-echo  Installer: installer_output\YouTubeVideoDownloader-Setup-2.0.2.exe
+echo  Installer: installer_output\YouTubeVideoDownloader-Setup-2.0.3.exe
 echo  Standalone: build_dist\%EXE_NAME%.exe
 if "%HAVE_FFMPEG%"=="0" echo  NOTE: built WITHOUT ffmpeg.
 echo ============================================

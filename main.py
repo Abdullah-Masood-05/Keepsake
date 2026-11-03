@@ -23,7 +23,7 @@ from widgets.download_item import DownloadItemWidget
 from widgets.format_selector import FormatSelector
 
 APP_TITLE = "YouTube Video Downloader"
-VERSION = "2.0.2"
+VERSION = "2.0.3"
 APP_USER_MODEL_ID = "YTDownloader.YouTubeVideoDownloader.2"
 
 # Audio containers whose cover art yt-dlp can embed without mutagen.
