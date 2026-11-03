@@ -1,8 +1,8 @@
 """Build the app icons from the logo artwork.
 
 The artwork (resources/icons/source/logo_artwork.jpg) is a flat JPEG: the mark
-on a #101010 tile with black corners and no transparency. This script lifts
-the mark off that background, centres it on a freshly drawn tile and writes:
+on a #101010 square with black corners and no transparency. This script lifts
+the circular mark off that background onto transparency and writes:
 
   resources/icons/app_source.png  1024 px master (Linux hicolor, macOS icns)
   resources/icons/app.png         512 px (window icon, header logo)
@@ -19,16 +19,15 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ICONS = os.path.join(ROOT, "resources", "icons")
 ARTWORK = os.path.join(ICONS, "source", "logo_artwork.jpg")
 
-# Tile colours: a near-black that sits just above the app's dark surfaces, so
-# the icon reads on dark taskbars and on light ones.
-TILE_TOP = (34, 30, 36)
-TILE_BOTTOM = (12, 11, 14)
-GLOW = (214, 30, 72)           # the mark's crimson
+# Swirl ring in the artwork's pixel coordinates (centre x, centre y, radius),
+# measured from the 1254 px JPEG; the ring's outer edge is at ~385 px.
+DISC = (555, 605, 360)
+DISC_COLOR = (20, 18, 22)
 SS = 4                         # supersampling factor for smooth edges
 
 
 def extract_mark(path):
-    """Return the mark as RGBA with a clean alpha, cropped to its bounds."""
+    """Return the mark as RGBA on transparency, cropped to its bounds."""
     rgb = Image.open(path).convert("RGB")
     r, g, b = rgb.split()
     brightest = ImageChops.lighter(ImageChops.lighter(r, g), b)
@@ -40,97 +39,56 @@ def extract_mark(path):
     )
     mark = rgb.convert("RGBA")
     mark.putalpha(alpha)
-    return mark.crop(alpha.getbbox())
+
+    # The artwork relies on its black background for the gaps between the
+    # swirl strands and for contrast behind the pale play button. Keep that as
+    # a dark disc tucked just inside the swirl ring, so the mark still reads on
+    # light backgrounds.
+    w, h = rgb.size
+    k = 4
+    disc = Image.new("L", (w * k, h * k), 0)
+    cx, cy, rad = DISC
+    ImageDraw.Draw(disc).ellipse(((cx - rad) * k, (cy - rad) * k, (cx + rad) * k, (cy + rad) * k),
+                                 fill=255)
+    disc = disc.resize((w, h), Image.LANCZOS)
+    backed = Image.new("RGBA", (w, h), DISC_COLOR + (0,))
+    backed.putalpha(disc)
+    backed = Image.alpha_composite(backed, mark)
+    return backed.crop(backed.getchannel("A").getbbox())
 
 
-def vertical_gradient(size, top, bottom):
-    w, h = size
-    grad = Image.new("RGB", (1, h))
-    for y in range(h):
-        t = y / max(h - 1, 1)
-        grad.putpixel((0, y), tuple(round(a + (b - a) * t) for a, b in zip(top, bottom)))
-    return grad.resize((w, h))
+def brighten(mark, factor):
+    """Lift the deep reds so the swirl doesn't turn into a dark blob when tiny."""
+    r, g, b, a = mark.split()
+    lift = lambda v: min(255, round(v * factor))
+    return Image.merge("RGBA", (r.point(lift), g.point(lift), b.point(lift), a))
 
 
-def render(size, mark, inset, radius, mark_scale, shadow, glow):
-    """Render the icon at `size` px.
-
-    inset/radius are fractions of `size`; mark_scale is the mark's largest
-    side as a fraction of the tile.
-    """
+def render(size, mark, scale=0.98):
+    """The mark centred on a transparent square canvas."""
     S = size * SS
+    target = round(S * scale)
+    k = target / max(mark.size)
+    m = mark.resize((round(mark.width * k), round(mark.height * k)), Image.LANCZOS)
     canvas = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-    pad = round(S * inset)
-    tile_box = (pad, pad, S - pad, S - pad)
-    tile_w = tile_box[2] - tile_box[0]
-    rad = round(S * radius)
-
-    tile_mask = Image.new("L", (S, S), 0)
-    ImageDraw.Draw(tile_mask).rounded_rectangle(tile_box, rad, fill=255)
-
-    if shadow:
-        sh = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-        sh_mask = tile_mask.filter(ImageFilter.GaussianBlur(S * 0.018))
-        sh_mask = ImageChops.offset(sh_mask, 0, round(S * 0.012))
-        sh.putalpha(sh_mask.point(lambda v: v * 0.45))
-        canvas = Image.alpha_composite(canvas, sh)
-
-    tile = vertical_gradient((S, S), TILE_TOP, TILE_BOTTOM).convert("RGBA")
-
-    if glow:
-        # Faint crimson bloom behind the swirl for depth.
-        bloom = Image.new("L", (S, S), 0)
-        c, rr = S / 2, tile_w * 0.30
-        ImageDraw.Draw(bloom).ellipse((c - rr, c - rr, c + rr, c + rr), fill=255)
-        bloom = bloom.filter(ImageFilter.GaussianBlur(tile_w * 0.16)).point(lambda v: v * 0.22)
-        tile = Image.composite(Image.new("RGBA", (S, S), GLOW + (255,)), tile, bloom)
-
-    # Hairline highlight along the top edge of the tile.
-    stroke = max(1, round(S * 0.004))
-    edge = Image.new("L", (S, S), 0)
-    ImageDraw.Draw(edge).rounded_rectangle(tile_box, rad, outline=255, width=stroke)
-    fade = vertical_gradient((S, S), (60, 60, 60), (8, 8, 8)).convert("L")
-    tile = Image.composite(Image.new("RGBA", (S, S), (255, 255, 255, 255)), tile,
-                           ImageChops.multiply(edge, fade))
-
-    tile.putalpha(tile_mask)
-    canvas = Image.alpha_composite(canvas, tile)
-
-    # Mark, centred on the tile by its bounding box.
-    target = round(tile_w * mark_scale)
-    scale = target / max(mark.size)
-    m = mark.resize((round(mark.width * scale), round(mark.height * scale)), Image.LANCZOS)
-    x = (S - m.width) // 2
-    y = (S - m.height) // 2
-    layer = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-    layer.paste(m, (x, y), m)
-    canvas = Image.alpha_composite(canvas, layer)
-
-    return canvas.resize((size, size), Image.LANCZOS)
+    canvas.paste(m, ((S - m.width) // 2, (S - m.height) // 2), m)
+    out = canvas.resize((size, size), Image.LANCZOS)
+    if size <= 48:
+        out = out.filter(ImageFilter.UnsharpMask(radius=0.6, percent=80, threshold=0))
+    return out
 
 
 def main():
     mark = extract_mark(ARTWORK)
 
-    # The mark is the icon: keep the tile margin thin and let the artwork fill it.
-    master = render(1024, mark, inset=0.02, radius=0.20, mark_scale=0.88,
-                    shadow=False, glow=True)
-    master.save(os.path.join(ICONS, "app_source.png"), optimize=True)
-    master.resize((512, 512), Image.LANCZOS).save(os.path.join(ICONS, "app.png"), optimize=True)
+    # macOS and Linux docks add their own spacing; leave a little margin.
+    render(1024, mark, scale=0.92).save(os.path.join(ICONS, "app_source.png"), optimize=True)
+    render(512, mark).save(os.path.join(ICONS, "app.png"), optimize=True)
 
-    # Windows: small sizes drop the glow and push the mark to the tile edge so it
-    # stays legible in Explorer and the taskbar.
     ico_frames = []
-    for s in (256, 128, 64, 48, 32, 24, 16):
-        small = s <= 32
-        ico_frames.append(render(
-            s, mark,
-            inset=0.0 if small else 0.02,
-            radius=0.20,
-            mark_scale=0.94 if small else 0.88,
-            shadow=False,
-            glow=not small,
-        ))
+    for s in (256, 128, 64, 48, 40, 32, 24, 20, 16):
+        m = brighten(mark, 1.35) if s <= 48 else mark
+        ico_frames.append(render(s, m))
     ico_frames[0].save(os.path.join(ICONS, "app.ico"), sizes=[f.size for f in ico_frames],
                        append_images=ico_frames[1:])
     print("wrote app_source.png, app.png, app.ico")
