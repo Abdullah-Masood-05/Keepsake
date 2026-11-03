@@ -45,11 +45,14 @@ PALETTES = {
         "text": "#EDEDED",
         "text2": "#9A9AA2",
         "text3": "#64646C",
-        "accent": "#D61E48",
-        "accent_hover": "#E8355F",
-        "accent_pressed": "#B0163B",
+        "accent": "#B80830",
+        "accent_hover": "#D01848",
+        "accent_pressed": "#990215",
+        # Thin accent lines (tab underline, focus border) use the logo's
+        # brighter red so they keep 3:1 contrast on the dark panels.
+        "accent_line": "#D01848",
         "on_accent": "#FFFFFF",
-        "selection": "#3A1320",
+        "selection": "#3A0F1A",
         "info": "#3D7BFF",
         "success": "#3E9B67",
         "warning": "#D19A2E",
@@ -68,11 +71,12 @@ PALETTES = {
         "text": "#18181B",
         "text2": "#5B5B64",
         "text3": "#A1A1AA",
-        "accent": "#C8173F",
-        "accent_hover": "#DB2450",
-        "accent_pressed": "#A31234",
+        "accent": "#A80020",
+        "accent_hover": "#B80830",
+        "accent_pressed": "#900010",
+        "accent_line": "#A80020",
         "on_accent": "#FFFFFF",
-        "selection": "#FCE6EC",
+        "selection": "#F8E1E6",
         "info": "#2F6BF0",
         "success": "#2F8A57",
         "warning": "#B7791F",
@@ -450,7 +454,7 @@ QPushButton#LinkButton:pressed {{
     color: {p['accent_pressed']};
 }}
 QPushButton#LinkButton:focus {{
-    color: {p['accent']};
+    color: {p['accent_line']};
 }}
 QPushButton#LinkButton:disabled {{
     color: {p['text3']};
@@ -489,7 +493,7 @@ QPushButton#LinkButton:disabled {{
 #Segmented QPushButton:checked {{
     color: {p['text']};
     background-color: {p['hover']};
-    border-bottom: 2px solid {p['accent']};
+    border-bottom: 2px solid {p['accent_line']};
     font-weight: 600;
 }}
 #Segmented QPushButton:focus {{
@@ -522,7 +526,7 @@ QLineEdit:hover, QSpinBox:hover, QComboBox:hover {{
     border-color: {p['border_strong']};
 }}
 QLineEdit:focus, QSpinBox:focus, QComboBox:focus, QComboBox:on {{
-    border-color: {p['accent']};
+    border-color: {p['accent_line']};
 }}
 QLineEdit:disabled, QSpinBox:disabled, QComboBox:disabled {{
     color: {p['text3']};
@@ -627,7 +631,7 @@ QCheckBox::indicator:hover {{
     border-color: {p['text3']};
 }}
 QCheckBox:focus::indicator {{
-    border-color: {p['accent']};
+    border-color: {p['accent_line']};
 }}
 QCheckBox::indicator:checked {{
     background-color: {p['accent']};
@@ -717,7 +721,7 @@ QTabBar#SideTabs::tab:hover {{
 }}
 QTabBar#SideTabs::tab:selected {{
     color: {p['text']};
-    border-bottom: 2px solid {p['accent']};
+    border-bottom: 2px solid {p['accent_line']};
 }}
 
 /* ---------- scroll areas / bars ---------- */
