@@ -112,22 +112,22 @@ def render(size, mark, inset, radius, mark_scale, shadow, glow):
 def main():
     mark = extract_mark(ARTWORK)
 
-    # Large sizes: Apple-style margins and a soft shadow (macOS / Linux docks).
-    master = render(1024, mark, inset=0.08, radius=0.185, mark_scale=0.68,
-                    shadow=True, glow=True)
+    # The mark is the icon: keep the tile margin thin and let the artwork fill it.
+    master = render(1024, mark, inset=0.02, radius=0.20, mark_scale=0.88,
+                    shadow=False, glow=True)
     master.save(os.path.join(ICONS, "app_source.png"), optimize=True)
     master.resize((512, 512), Image.LANCZOS).save(os.path.join(ICONS, "app.png"), optimize=True)
 
-    # Windows: tighter margins so the icon isn't tiny in Explorer and the
-    # taskbar; small sizes drop the glow and enlarge the mark to stay legible.
+    # Windows: small sizes drop the glow and push the mark to the tile edge so it
+    # stays legible in Explorer and the taskbar.
     ico_frames = []
     for s in (256, 128, 64, 48, 32, 24, 16):
         small = s <= 32
         ico_frames.append(render(
             s, mark,
-            inset=0.02 if small else 0.04,
+            inset=0.0 if small else 0.02,
             radius=0.20,
-            mark_scale=0.80 if small else 0.72,
+            mark_scale=0.94 if small else 0.88,
             shadow=False,
             glow=not small,
         ))
