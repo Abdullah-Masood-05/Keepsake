@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QTextBrowser, QScrollArea, QFrame,
     QFileDialog, QMessageBox, QSizePolicy, QSplitter, QCheckBox, QSpinBox,
-    QTabBar, QStackedWidget,
+    QTabBar, QStackedWidget, QComboBox,
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont, QIcon, QPixmap
@@ -21,6 +21,7 @@ from widgets.common import ElidedLabel, Segmented, icon_button, section_label
 from widgets.video_card import VideoCard
 from widgets.download_item import DownloadItemWidget
 from widgets.format_selector import FormatSelector
+from widgets.supported_sites_dialog import SupportedSitesDialog
 
 APP_TITLE = "YouTube Video Downloader"
 VERSION = "2.0.4"
@@ -28,6 +29,14 @@ APP_USER_MODEL_ID = "YTDownloader.YouTubeVideoDownloader.2"
 
 # Audio containers whose cover art yt-dlp can embed without mutagen.
 _EMBED_THUMB_AUDIO = {"mp3", "m4a"}
+
+# Browsers yt-dlp can read cookies from (label, yt-dlp name). Cookies let
+# sites that need a sign-in (private, age-restricted, members-only) work.
+_COOKIE_BROWSERS = [("Off", ""), ("Firefox", "firefox"), ("Chrome", "chrome"),
+                    ("Edge", "edge"), ("Brave", "brave"), ("Opera", "opera"),
+                    ("Vivaldi", "vivaldi"), ("Chromium", "chromium")]
+if sys.platform == "darwin":
+    _COOKIE_BROWSERS.insert(2, ("Safari", "safari"))
 
 
 def _app_icon():
@@ -179,7 +188,7 @@ class MainWindow(QMainWindow):
         url_row.setSpacing(0)
         self.url_input = QLineEdit()
         self.url_input.setObjectName("UrlInput")
-        self.url_input.setPlaceholderText("Paste a YouTube video or playlist URL")
+        self.url_input.setPlaceholderText("Paste a video, playlist or audio link (YouTube and 1,000+ other sites)")
         self.url_input.setFixedHeight(40)
         self._url_action = self.url_input.addAction(
             theme.icon("link", "text3"), QLineEdit.ActionPosition.LeadingPosition
@@ -351,7 +360,35 @@ class MainWindow(QMainWindow):
         open_btn.clicked.connect(self._open_output_folder)
         lay.addWidget(open_btn)
 
+        lay.addSpacing(12)
+        sites_btn = QPushButton("Supported sites")
+        sites_btn.setObjectName("LinkButton")
+        sites_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        sites_btn.setToolTip("Every site yt-dlp can download from")
+        sites_btn.clicked.connect(self._show_supported_sites)
+        lay.addWidget(sites_btn)
+
         lay.addStretch(1)
+
+        lay.addWidget(section_label("Cookies"))
+        self.cookies_combo = QComboBox()
+        self.cookies_combo.setCursor(Qt.CursorShape.PointingHandCursor)
+        theme.polish_combo(self.cookies_combo)
+        self.cookies_combo.setObjectName("FooterCombo")
+        self.cookies_combo.setFixedSize(104, 24)
+        for label, name in _COOKIE_BROWSERS:
+            self.cookies_combo.addItem(label, name)
+        self.cookies_combo.setToolTip(
+            "Use your browser's sign-in for sites that need an account\n"
+            "(private, age-restricted or members-only content).\n"
+            "Firefox works best on Windows: Chromium browsers encrypt their\n"
+            "cookies and must be closed while fetching."
+        )
+        idx = self.cookies_combo.findData(self.config.get("cookies_browser", ""))
+        self.cookies_combo.setCurrentIndex(max(0, idx))
+        self.cookies_combo.currentIndexChanged.connect(self._on_cookies_changed)
+        lay.addWidget(self.cookies_combo)
+        lay.addSpacing(16)
 
         lay.addWidget(section_label("Parallel"))
         self.concurrent_spin = QSpinBox()
@@ -443,6 +480,17 @@ class MainWindow(QMainWindow):
             config_manager.save(self.config)
             self._update_output_label()
 
+    def _show_supported_sites(self):
+        SupportedSitesDialog(self).exec()
+
+    def _on_cookies_changed(self, _index):
+        self.config["cookies_browser"] = self.cookies_combo.currentData() or ""
+        config_manager.save(self.config)
+
+    def _cookie_opts(self):
+        browser = self.cookies_combo.currentData() or ""
+        return {"cookiesfrombrowser": (browser,)} if browser else {}
+
     def _open_output_folder(self):
         from PyQt6.QtCore import QUrl
         from PyQt6.QtGui import QDesktopServices
@@ -465,12 +513,12 @@ class MainWindow(QMainWindow):
 
         self.fetch_btn.setEnabled(False)
         self.fetch_btn.setText("Fetching")
-        self._set_status("Fetching video information...")
+        self._set_status("Fetching link information...")
         self.video_card.set_loading()
         self.format_selector.clear()
 
         self.current_video_info = None
-        self.fetch_worker = FetchWorker(url, self)
+        self.fetch_worker = FetchWorker(url, self, extra_opts=self._cookie_opts())
         self.fetch_worker.info_ready.connect(self._on_info_ready)
         self.fetch_worker.error_occurred.connect(self._on_fetch_error)
         self.fetch_worker.finished.connect(self._on_fetch_finished)
@@ -479,9 +527,22 @@ class MainWindow(QMainWindow):
     def _on_info_ready(self, data):
         self.current_video_info = data
         self.video_card.set_info(data)
-        self.format_selector.set_formats(data.get("formats", []), data.get("qualities"))
+        self.format_selector.set_formats(
+            data.get("formats", []), data.get("qualities"),
+            generic_fallback=bool(data.get("is_playlist")),
+            has_video=data.get("has_video", True),
+        )
         title = data.get("title") or "Unknown"
-        kind = "Playlist" if data.get("is_playlist") else "Video"
+        if data.get("is_playlist"):
+            kind = "Playlist"
+        else:
+            kind = "Video" if data.get("has_video", True) else "Audio"
+        if data.get("preview_only"):
+            self._set_status(
+                f"{kind} loaded: {title}. Only a short preview is available "
+                "(the full track may need a sign-in, see Cookies)", "warn"
+            )
+            return
         self._set_status(f"{kind} loaded: {title}", "ok")
 
     def _on_fetch_error(self, message):
@@ -546,7 +607,10 @@ class MainWindow(QMainWindow):
             "paths": {"home": out_dir},
             "noplaylist": False,
             "windowsfilenames": True,
+            # Some sites use the whole post text as the title.
+            "trim_file_name": 180,
         }
+        opts.update(self._cookie_opts())
         if self.ffmpeg_path:
             opts["ffmpeg_location"] = self.ffmpeg_path
         return opts

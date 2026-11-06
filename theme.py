@@ -341,6 +341,9 @@ QSplitter::handle {{
 #StatusText[state="ok"] {{
     color: {p['success']};
 }}
+#StatusText[state="warn"] {{
+    color: {p['warning']};
+}}
 #EmptyTitle {{
     color: {p['text2']};
     font-size: 13px;
@@ -538,6 +541,11 @@ QComboBox {{
     padding: 0px 10px;
     min-height: 30px;
     combobox-popup: 0;
+}}
+QComboBox#FooterCombo {{
+    min-height: 22px;
+    padding: 0px 8px;
+    font-size: 12px;
 }}
 QComboBox::drop-down {{
     subcontrol-origin: padding;

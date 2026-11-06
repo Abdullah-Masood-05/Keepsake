@@ -22,6 +22,7 @@ DEFAULTS = {
     "audio_bitrate": "192",
     "embed_thumbnail": True,
     "max_concurrent_downloads": 3,
+    "cookies_browser": "",
 }
 
 

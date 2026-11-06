@@ -99,6 +99,7 @@ class FormatSelector(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.formats = []
+        self._mode_before_audio_only = None
         self._setup_ui()
 
     def _setup_ui(self):
@@ -252,19 +253,34 @@ class FormatSelector(QWidget):
 
     # ------------------------------------------------------------- formats
 
-    def set_formats(self, formats, qualities=None):
+    def set_formats(self, formats, qualities=None, generic_fallback=True, has_video=True):
         self.formats = formats
         self._populate_table(formats)
         if qualities is None:
             qualities = self._qualities_from_formats(formats)
-        self.set_qualities(qualities)
+        self.set_qualities(qualities, generic_fallback)
+        self.set_has_video(has_video)
 
-    def set_qualities(self, qualities):
+    def set_has_video(self, has_video):
+        """Audio-only sources (SoundCloud, Bandcamp...) can't be saved as video."""
+        video_btn = self.mode_switch.buttons[0]
+        video_btn.setEnabled(has_video)
+        video_btn.setToolTip("" if has_video else "This link has no video, only audio")
+        if not has_video and self.get_mode() == 0:
+            self._mode_before_audio_only = 0
+            self.mode_switch.set_index(1)
+        elif has_video and getattr(self, "_mode_before_audio_only", None) is not None:
+            self.mode_switch.set_index(self._mode_before_audio_only)
+            self._mode_before_audio_only = None
+
+    def set_qualities(self, qualities, generic_fallback=True):
         """Populate the quality dropdown with only the heights available."""
-        if not qualities:
+        if not qualities and generic_fallback:
             # No per-format info (e.g. some playlists): fall back to a generic
             # list; the download format string degrades gracefully anyway.
             qualities = [{"height": h} for h in (2160, 1440, 1080, 720, 480, 360)]
+        # Sites that don't report heights only get "Best available".
+        qualities = qualities or []
         self.video_quality.blockSignals(True)
         self.video_quality.clear()
         self.video_quality.addItem("Best available", 0)
@@ -416,10 +432,15 @@ class FormatSelector(QWidget):
         config["h264_enabled"] = self.h264_check.isChecked()
         config["audio_format"] = self.audio_format.currentText().lower()
         config["audio_bitrate"] = self.audio_bitrate.currentData() or "192"
-        config["download_mode"] = ("video", "audio", "thumbnail")[self.get_mode()]
+        mode = self.get_mode()
+        if getattr(self, "_mode_before_audio_only", None) is not None and mode == 1:
+            # Switched to Audio only because the link had no video.
+            mode = self._mode_before_audio_only
+        config["download_mode"] = ("video", "audio", "thumbnail")[mode]
 
     def clear(self):
         self.formats = []
         self.format_table.setRowCount(0)
         self.selected_label.setText("Automatic")
         self._reset_quality_combo()
+        self.set_has_video(True)
