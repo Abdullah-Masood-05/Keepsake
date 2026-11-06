@@ -1,7 +1,7 @@
 # nfpm config for the .deb, .rpm and Arch .pkg.tar.zst packages.
 #
 # Run from the repository root after packaging/linux/build.sh, e.g.:
-#   VERSION=2.0.4 nfpm pkg -f packaging/linux/nfpm.yaml -p deb -t dist/
+#   VERSION=2.1.0 nfpm pkg -f packaging/linux/nfpm.yaml -p deb -t dist/
 #
 # All three formats ship the same files. Only the dependency names differ.
 name: fetchly

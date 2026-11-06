@@ -5,7 +5,7 @@
 ; =====================================================================
 
 #define MyAppName "Fetchly"
-#define MyAppVersion "2.0.4"
+#define MyAppVersion "2.1.0"
 #define MyAppPublisher "Abdullah Masood"
 #define MyAppURL "https://github.com/Abdullah-Masood-05/YT-VideoDowloader"
 #define MyAppExeName "Fetchly.exe"
@@ -22,7 +22,7 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
-VersionInfoVersion=2.0.4.0
+VersionInfoVersion=2.1.0.0
 VersionInfoProductName={#MyAppName}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}

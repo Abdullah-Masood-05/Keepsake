@@ -24,7 +24,7 @@ from widgets.format_selector import FormatSelector
 from widgets.supported_sites_dialog import SupportedSitesDialog
 
 APP_TITLE = "Fetchly"
-VERSION = "2.0.4"
+VERSION = "2.1.0"
 APP_USER_MODEL_ID = "AbdullahMasood.Fetchly"
 
 # Audio containers whose cover art yt-dlp can embed without mutagen.
