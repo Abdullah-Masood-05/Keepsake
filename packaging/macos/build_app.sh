@@ -36,6 +36,9 @@ rm -rf "$OUT/$APP_NAME.app" "$OUT/$APP_NAME" "$OUT/pyi-work"
   --add-data "$ROOT/resources/icons/app.ico:resources/icons" \
   --collect-submodules yt_dlp \
   --collect-data yt_dlp \
+  --collect-all yt_dlp_ejs \
+  --collect-all curl_cffi \
+  --collect-data certifi \
   --exclude-module tkinter \
   --exclude-module nuitka \
   --distpath "$OUT" \

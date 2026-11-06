@@ -73,6 +73,9 @@ REM  --noinclude-custom-mode=yt_dlp.extractor:bytecode : ship yt-dlp's
 REM             ~970 extractor modules as bytecode instead of C. This cuts
 REM             the C files from ~1100 to ~150 and the build dir from
 REM             1.8 GB to ~170 MB. Extractors are not performance critical.
+REM  --include-package(-data)=yt_dlp_ejs : the extractors are bytecode, so Nuitka
+REM             does not see their lazy "import yt_dlp_ejs.yt.solver"; ship the
+REM             YouTube JS challenge solver and its .js files explicitly.
 REM  Data files are found at runtime relative to the main module's __file__.
 "%PYTHON%" -m nuitka ^
     --onefile ^
@@ -81,6 +84,8 @@ REM  Data files are found at runtime relative to the main module's __file__.
     --jobs=%JOBS% ^
     --enable-plugin=pyqt6 ^
     --noinclude-custom-mode=yt_dlp.extractor:bytecode ^
+    --include-package=yt_dlp_ejs ^
+    --include-package-data=yt_dlp_ejs ^
     --nofollow-import-to=unittest,test,pytest,_pytest,doctest,pdb ^
     --nofollow-import-to=setuptools,pip,distutils,pkg_resources ^
     --noinclude-setuptools-mode=nofollow ^

@@ -124,3 +124,14 @@ python -m nuitka --onefile --windows-console-mode=disable --lto=no ^
   --windows-icon-from-ico=resources\icons\app.ico ^
   --assume-yes-for-downloads --output-dir=build_dist main.py
 ```
+
+## Optional yt-dlp dependencies
+
+`yt-dlp[default,curl-cffi]` (plus `secretstorage` on Linux) is a project dependency. A probe
+compiled with the flags above (`--standalone`, no extra flags) finds brotli, certifi (with
+`cacert.pem`), mutagen, Cryptodome, websockets, requests, urllib3 and curl_cffi (browser
+impersonation works) automatically, because `yt_dlp.dependencies` is compiled normally.
+
+The one exception is `yt_dlp_ejs` (YouTube JS challenge solver). It is only imported from inside
+the extractors, which ship as bytecode, so Nuitka never sees the import. Hence
+`--include-package=yt_dlp_ejs --include-package-data=yt_dlp_ejs` in every Nuitka build.

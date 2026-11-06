@@ -1,7 +1,7 @@
 [project]
 name = "youtube-video-downloader"
 version = "2.0.4"
-description = "Desktop YouTube video and audio downloader built on yt-dlp and PyQt6"
+description = "Desktop video and audio downloader for YouTube and 1,800+ other sites, built on yt-dlp and PyQt6"
 readme = "Readme.md"
 authors = [
     { name = "Abdullah Masood", email = "Abdullah-Masood-05@users.noreply.github.com" }
@@ -10,7 +10,9 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "pyqt6>=6.5.0",
     "requests>=2.31.0",
-    "yt-dlp>=2024.1.1",
+    "yt-dlp[default,curl-cffi]>=2024.1.1",
+    # Linux: lets yt-dlp decrypt Chrome/Chromium cookies (cookies-from-browser)
+    "secretstorage>=3.3.0; sys_platform == 'linux'",
 ]
 
 [dependency-groups]

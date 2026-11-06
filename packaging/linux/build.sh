@@ -28,6 +28,8 @@ mkdir -p "$OUT"
     --jobs="$(nproc)" \
     --enable-plugin=pyqt6 \
     --noinclude-custom-mode=yt_dlp.extractor:bytecode \
+    --include-package=yt_dlp_ejs \
+    --include-package-data=yt_dlp_ejs \
     --nofollow-import-to=unittest,test,pytest,_pytest,doctest,pdb \
     --nofollow-import-to=setuptools,pip,distutils,pkg_resources \
     --noinclude-setuptools-mode=nofollow \
