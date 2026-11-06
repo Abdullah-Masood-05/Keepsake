@@ -4,13 +4,19 @@
 [![Build Linux packages](https://github.com/Abdullah-Masood-05/YT-VideoDowloader/actions/workflows/build-linux.yml/badge.svg)](https://github.com/Abdullah-Masood-05/YT-VideoDowloader/actions/workflows/build-linux.yml)
 [![Build macOS](https://github.com/Abdullah-Masood-05/YT-VideoDowloader/actions/workflows/build-macos.yml/badge.svg)](https://github.com/Abdullah-Masood-05/YT-VideoDowloader/actions/workflows/build-macos.yml)
 
-A desktop app for Windows, Linux and macOS for downloading YouTube videos, audio and thumbnails, built on
-[yt-dlp](https://github.com/yt-dlp/yt-dlp) and PyQt6.
+A desktop app for Windows, Linux and macOS for downloading videos, audio and thumbnails from YouTube and
+1,000+ other sites supported by [yt-dlp](https://github.com/yt-dlp/yt-dlp) (Vimeo, SoundCloud,
+Dailymotion, Bandcamp, Twitch, X, Reddit, TikTok, Instagram, archive.org and more), built on yt-dlp and PyQt6.
+The footer has a **Supported sites** link that opens a searchable list.
 
 ![Dark theme](docs/screenshots/dark.png)
 
 ## Features
 
+- Works with YouTube and 1,000+ other sites, not just YouTube
+- **Cookies** option in the footer (Firefox, Chrome, Edge, Brave, Opera, Vivaldi, Chromium, plus Safari on macOS) to
+  download login-only or age-restricted content with your browser's session. On Windows, Firefox is recommended
+  because Chrome-based browsers encrypt their cookies in a way that blocks access.
 - Quality list built from what each video actually offers (no fake 4K options)
 - Video (MP4, optional H.264 for compatibility), audio (MP3, M4A, OPUS, WAV, FLAC) and thumbnail modes
 - Embedded cover art and metadata
