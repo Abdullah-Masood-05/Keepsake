@@ -5,7 +5,7 @@
 ; =====================================================================
 
 #define MyAppName "YouTube Video Downloader"
-#define MyAppVersion "2.0.3"
+#define MyAppVersion "2.0.4"
 #define MyAppPublisher "YTDownloader"
 #define MyAppURL "https://github.com/Abdullah-Masood-05/YT-VideoDowloader"
 #define MyAppExeName "YouTubeVideoDownloader.exe"
@@ -22,7 +22,7 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
-VersionInfoVersion=2.0.3.0
+VersionInfoVersion=2.0.4.0
 VersionInfoProductName={#MyAppName}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
