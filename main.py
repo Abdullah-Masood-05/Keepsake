@@ -593,11 +593,11 @@ class MainWindow(QMainWindow):
             h = f"[height<={max_height}]" if max_height else ""
             fmt_str = f"bestvideo{h}+bestaudio/best{h}/best"
             if h264:
-                # Prefer H.264 (avc1) video + AAC audio; fall back if absent.
-                fmt_str = (
-                    f"bestvideo[vcodec^=avc1]{h}+bestaudio[ext=m4a]/"
-                    f"best[vcodec^=avc1]{h}/" + fmt_str
-                )
+                # Resolution first, codec second: YouTube only serves H.264 up
+                # to 1080p, so filtering on avc1 would silently cap 4K/1440p
+                # downloads. Sorting picks the highest allowed resolution and
+                # only prefers H.264/AAC among streams of that resolution.
+                ydl_opts["format_sort"] = ["res", "fps", "vcodec:h264", "acodec:aac"]
 
         embed = self.embed_thumb_check.isChecked()
         if selected_fmt and selected_fmt.get("fmt_type") == "audio-only":

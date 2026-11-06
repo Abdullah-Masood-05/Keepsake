@@ -198,7 +198,9 @@ class FormatSelector(QWidget):
         self.h264_check = QCheckBox("Prefer H.264")
         self.h264_check.setCursor(Qt.CursorShape.PointingHandCursor)
         self.h264_check.setToolTip(
-            "Prefer H.264/AAC streams for maximum compatibility (plays everywhere)"
+            "Prefer H.264/AAC streams for maximum compatibility when they exist at the "
+            "selected resolution. YouTube only offers H.264 up to 1080p, so higher "
+            "resolutions use VP9 or AV1."
         )
         self.h264_check.setFixedHeight(30)
         lay.addWidget(self.h264_check, 0, Qt.AlignmentFlag.AlignBottom)
