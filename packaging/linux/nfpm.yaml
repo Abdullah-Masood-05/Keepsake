@@ -4,7 +4,7 @@
 #   VERSION=2.0.4 nfpm pkg -f packaging/linux/nfpm.yaml -p deb -t dist/
 #
 # All three formats ship the same files. Only the dependency names differ.
-name: youtube-video-downloader
+name: fetchly
 arch: amd64
 platform: linux
 version: ${VERSION}
@@ -16,50 +16,56 @@ maintainer: Abdullah Masood <Abdullah-Masood-05@users.noreply.github.com>
 vendor: Abdullah Masood
 homepage: https://github.com/Abdullah-Masood-05/YT-VideoDowloader
 license: GPL-3.0-only
+# Formerly packaged as youtube-video-downloader; upgrade over it cleanly.
+replaces:
+  - youtube-video-downloader
+conflicts:
+  - youtube-video-downloader
 description: |-
-  Desktop YouTube video and audio downloader.
+  Desktop video and audio downloader for YouTube and 1,000+ other sites.
   A PyQt6 front end for yt-dlp: paste a link, pick a quality or an audio
-  format, and download videos, audio and whole playlists. Ships its own
+  format, and download videos, audio and whole playlists from any site
+  yt-dlp supports. Ships its own
   static ffmpeg/ffprobe build for merging streams and converting audio.
 
 contents:
   # Nuitka standalone folder, including the bundled static ffmpeg/ffprobe.
   - src: build/linux/dist
-    dst: /opt/youtube-video-downloader
+    dst: /opt/fetchly
     type: tree
-  - src: /opt/youtube-video-downloader/youtube-video-downloader
-    dst: /usr/bin/youtube-video-downloader
+  - src: /opt/fetchly/fetchly
+    dst: /usr/bin/fetchly
     type: symlink
 
-  - src: packaging/linux/youtube-video-downloader.desktop
-    dst: /usr/share/applications/youtube-video-downloader.desktop
+  - src: packaging/linux/fetchly.desktop
+    dst: /usr/share/applications/fetchly.desktop
     file_info: {mode: 0644}
 
-  - src: build/linux/icons/48x48/apps/youtube-video-downloader.png
-    dst: /usr/share/icons/hicolor/48x48/apps/youtube-video-downloader.png
+  - src: build/linux/icons/48x48/apps/fetchly.png
+    dst: /usr/share/icons/hicolor/48x48/apps/fetchly.png
     file_info: {mode: 0644}
-  - src: build/linux/icons/64x64/apps/youtube-video-downloader.png
-    dst: /usr/share/icons/hicolor/64x64/apps/youtube-video-downloader.png
+  - src: build/linux/icons/64x64/apps/fetchly.png
+    dst: /usr/share/icons/hicolor/64x64/apps/fetchly.png
     file_info: {mode: 0644}
-  - src: build/linux/icons/128x128/apps/youtube-video-downloader.png
-    dst: /usr/share/icons/hicolor/128x128/apps/youtube-video-downloader.png
+  - src: build/linux/icons/128x128/apps/fetchly.png
+    dst: /usr/share/icons/hicolor/128x128/apps/fetchly.png
     file_info: {mode: 0644}
-  - src: build/linux/icons/256x256/apps/youtube-video-downloader.png
-    dst: /usr/share/icons/hicolor/256x256/apps/youtube-video-downloader.png
+  - src: build/linux/icons/256x256/apps/fetchly.png
+    dst: /usr/share/icons/hicolor/256x256/apps/fetchly.png
     file_info: {mode: 0644}
-  - src: build/linux/icons/512x512/apps/youtube-video-downloader.png
-    dst: /usr/share/icons/hicolor/512x512/apps/youtube-video-downloader.png
+  - src: build/linux/icons/512x512/apps/fetchly.png
+    dst: /usr/share/icons/hicolor/512x512/apps/fetchly.png
     file_info: {mode: 0644}
 
   - src: LICENSE
-    dst: /usr/share/licenses/youtube-video-downloader/LICENSE
+    dst: /usr/share/licenses/fetchly/LICENSE
     file_info: {mode: 0644}
   - src: THIRD_PARTY_NOTICES.md
-    dst: /usr/share/licenses/youtube-video-downloader/THIRD_PARTY_NOTICES.md
+    dst: /usr/share/licenses/fetchly/THIRD_PARTY_NOTICES.md
     file_info: {mode: 0644}
   # Debian policy wants the licence under /usr/share/doc/<package>/copyright.
   - src: LICENSE
-    dst: /usr/share/doc/youtube-video-downloader/copyright
+    dst: /usr/share/doc/fetchly/copyright
     file_info: {mode: 0644}
     packager: deb
 

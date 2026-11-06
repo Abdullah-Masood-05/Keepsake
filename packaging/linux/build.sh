@@ -5,13 +5,13 @@
 #   packaging/linux/build.sh
 #
 # Output (all under build/linux/):
-#   dist/                      Nuitka standalone folder -> /opt/youtube-video-downloader
+#   dist/                      Nuitka standalone folder -> /opt/fetchly
 #   icons/<N>x<N>/apps/*.png   hicolor icons
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
-APP=youtube-video-downloader
+APP=fetchly
 OUT=build/linux
 PYTHON=${PYTHON:-.venv/bin/python}
 

@@ -89,14 +89,14 @@ jobs:
           --include-data-files=resources\icons\app.ico=resources\icons\app.ico
           --include-data-files=resources\icons\app.png=resources\icons\app.png
           --windows-icon-from-ico=resources\icons\app.ico
-          --company-name="YTDownloader"
-          --product-name="YouTube Video Downloader"
-          --file-description="YouTube Video Downloader"
+          --company-name="Abdullah Masood"
+          --product-name="Fetchly"
+          --file-description="Fetchly"
           --file-version=${{ steps.version.outputs.version }}.0
           --product-version=${{ steps.version.outputs.version }}.0
           --copyright="Copyright (c) 2026 Abdullah Masood"
           --assume-yes-for-downloads
-          --output-filename=YouTubeVideoDownloader.exe
+          --output-filename=Fetchly.exe
           --output-dir=build_dist
           --remove-output
           main.py
@@ -104,11 +104,11 @@ jobs:
       - name: Smoke test (launch, stay alive 10 s)
         shell: pwsh
         run: |
-          $exe = Resolve-Path build_dist\YouTubeVideoDownloader.exe
+          $exe = Resolve-Path build_dist\Fetchly.exe
           Write-Host ("Size: {0:N1} MB" -f ((Get-Item $exe).Length / 1MB))
           $p = Start-Process -FilePath $exe -PassThru
           Start-Sleep -Seconds 10
-          $alive = Get-Process -Name YouTubeVideoDownloader -ErrorAction SilentlyContinue
+          $alive = Get-Process -Name Fetchly -ErrorAction SilentlyContinue
           if (-not $alive) {
             $p.Refresh()
             throw "App exited early (exit code: $($p.ExitCode))"
@@ -162,14 +162,14 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: YouTubeVideoDownloader-installer
-          path: installer_output/YouTubeVideoDownloader-Setup-*.exe
+          name: Fetchly-installer
+          path: installer_output/Fetchly-Setup-*.exe
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
         with:
-          name: YouTubeVideoDownloader-exe
-          path: build_dist/YouTubeVideoDownloader.exe
+          name: Fetchly-exe
+          path: build_dist/Fetchly.exe
           if-no-files-found: error
 
       - name: Attach to GitHub release
@@ -177,5 +177,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            installer_output/YouTubeVideoDownloader-Setup-*.exe
-            build_dist/YouTubeVideoDownloader.exe
+            installer_output/Fetchly-Setup-*.exe
+            build_dist/Fetchly.exe

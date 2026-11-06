@@ -1,9 +1,9 @@
-YouTube Video Downloader for macOS (Apple Silicon) - EXPERIMENTAL
+Fetchly for macOS (Apple Silicon) - EXPERIMENTAL
 =================================================================
 
 Install
 -------
-Drag "YouTube Video Downloader.app" onto the Applications folder.
+Drag "Fetchly.app" onto the Applications folder.
 
 First launch: the app is not signed or notarized
 -------------------------------------------------
@@ -18,12 +18,12 @@ Option 1: In Finder, right-click (or Control-click) the app, choose Open,
 
 Option 2: Remove the quarantine flag in Terminal:
 
-    xattr -dr com.apple.quarantine "/Applications/YouTube Video Downloader.app"
+    xattr -dr com.apple.quarantine "/Applications/Fetchly.app"
 
 Notes
 -----
 - Requires a Mac with Apple Silicon (M1 or newer). Intel Macs are not supported
   by this build.
 - FFmpeg and FFprobe (minimal LGPL build) are bundled inside the app.
-- Settings are stored in ~/.config/YouTubeVideoDownloader.
+- Settings are stored in ~/.config/Fetchly.
 - License: GPL-3.0. Source: https://github.com/Abdullah-Masood-05/YT-VideoDowloader

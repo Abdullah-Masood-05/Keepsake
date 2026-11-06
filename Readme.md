@@ -1,10 +1,10 @@
-# YouTube Video Downloader
+# Fetchly
 
 [![Build Windows](https://github.com/Abdullah-Masood-05/YT-VideoDowloader/actions/workflows/build-windows.yml/badge.svg)](https://github.com/Abdullah-Masood-05/YT-VideoDowloader/actions/workflows/build-windows.yml)
 [![Build Linux packages](https://github.com/Abdullah-Masood-05/YT-VideoDowloader/actions/workflows/build-linux.yml/badge.svg)](https://github.com/Abdullah-Masood-05/YT-VideoDowloader/actions/workflows/build-linux.yml)
 [![Build macOS](https://github.com/Abdullah-Masood-05/YT-VideoDowloader/actions/workflows/build-macos.yml/badge.svg)](https://github.com/Abdullah-Masood-05/YT-VideoDowloader/actions/workflows/build-macos.yml)
 
-A desktop app for Windows, Linux and macOS for downloading videos, audio and thumbnails from YouTube and
+Fetchly (formerly *YouTube Video Downloader*) is a desktop app for Windows, Linux and macOS for downloading videos, audio and thumbnails from YouTube and
 1,000+ other sites supported by [yt-dlp](https://github.com/yt-dlp/yt-dlp) (Vimeo, SoundCloud,
 Dailymotion, Bandcamp, Twitch, X, Reddit, TikTok, Instagram, archive.org and more), built on yt-dlp and PyQt6.
 The footer has a **Supported sites** link that opens a searchable list.
@@ -33,15 +33,15 @@ FFmpeg is bundled on every platform.
 
 | Platform | File |
 |---|---|
-| Windows 10/11 x64 | `YouTubeVideoDownloader-Setup-<version>.exe` (or the standalone `.exe`) |
-| Debian / Ubuntu | `youtube-video-downloader_<version>_amd64.deb` (`sudo apt install ./<file>.deb`) |
-| Fedora / openSUSE | `youtube-video-downloader-<version>-1.x86_64.rpm` (`sudo dnf install ./<file>.rpm`) |
-| Arch Linux | `youtube-video-downloader-<version>-1-x86_64.pkg.tar.zst` (`sudo pacman -U <file>`) |
-| macOS 11+ (Apple Silicon) | `YouTubeVideoDownloader-<version>-macos-arm64.dmg` (experimental) |
+| Windows 10/11 x64 | `Fetchly-Setup-<version>.exe` (or the standalone `.exe`) |
+| Debian / Ubuntu | `fetchly_<version>_amd64.deb` (`sudo apt install ./<file>.deb`) |
+| Fedora / openSUSE | `fetchly-<version>-1.x86_64.rpm` (`sudo dnf install ./<file>.rpm`) |
+| Arch Linux | `fetchly-<version>-1-x86_64.pkg.tar.zst` (`sudo pacman -U <file>`) |
+| macOS 11+ (Apple Silicon) | `Fetchly-<version>-macos-arm64.dmg` (experimental) |
 
 The builds are not code-signed. On Windows, SmartScreen may warn. On macOS, right-click the app
 and choose **Open** the first time, or run
-`xattr -dr com.apple.quarantine "/Applications/YouTube Video Downloader.app"`.
+`xattr -dr com.apple.quarantine "/Applications/Fetchly.app"`.
 
 ## Development
 
@@ -86,7 +86,7 @@ FFmpeg comes from [ffmpeg-ytdl-minimal-build](https://github.com/Abdullah-Masood
 main.py              main window
 theme.py             dark / light themes
 app_paths.py         paths for source and compiled builds
-config_manager.py    settings in %APPDATA%\YouTubeVideoDownloader
+config_manager.py    settings in %APPDATA%\Fetchly
 download_manager.py  download queue
 widgets/             UI components
 workers/             fetch and download threads

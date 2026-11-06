@@ -1,5 +1,5 @@
 [project]
-name = "youtube-video-downloader"
+name = "fetchly"
 version = "2.0.4"
 description = "Desktop video and audio downloader for YouTube and 1,800+ other sites, built on yt-dlp and PyQt6"
 readme = "Readme.md"

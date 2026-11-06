@@ -1,14 +1,14 @@
 ; =====================================================================
-;  Inno Setup Script - YouTube Video Downloader
+;  Inno Setup Script - Fetchly
 ;  Packages the Nuitka single-file exe + ffmpeg into a Windows installer.
 ;  Build with: "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
 ; =====================================================================
 
-#define MyAppName "YouTube Video Downloader"
+#define MyAppName "Fetchly"
 #define MyAppVersion "2.0.4"
-#define MyAppPublisher "YTDownloader"
+#define MyAppPublisher "Abdullah Masood"
 #define MyAppURL "https://github.com/Abdullah-Masood-05/YT-VideoDowloader"
-#define MyAppExeName "YouTubeVideoDownloader.exe"
+#define MyAppExeName "Fetchly.exe"
 #define MySourceDir "build_dist"
 #define MyFFmpegDir "ffmpeg"
 
@@ -27,6 +27,8 @@ VersionInfoProductName={#MyAppName}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
+; The Start menu folder was renamed with the app; do not reuse the old one.
+UsePreviousGroup=no
 ; Admin install to Program Files by default; the user may choose a
 ; per-user install instead.
 PrivilegesRequired=admin
@@ -34,7 +36,7 @@ PrivilegesRequiredOverridesAllowed=dialog
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=installer_output
-OutputBaseFilename=YouTubeVideoDownloader-Setup-{#MyAppVersion}
+OutputBaseFilename=Fetchly-Setup-{#MyAppVersion}
 SetupIconFile=resources\icons\app.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 UninstallDisplayName={#MyAppName}
@@ -56,6 +58,14 @@ Source: "{#MySourceDir}\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 ; ffmpeg must sit next to the exe; the app looks there first.
 Source: "{#MyFFmpegDir}\ffmpeg.exe"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#MyFFmpegDir}\ffprobe.exe"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+
+[InstallDelete]
+; Leftovers from before the app was renamed from "YouTube Video Downloader"
+; (same AppId, so upgrades land in the old install folder).
+Type: files; Name: "{app}\YouTubeVideoDownloader.exe"
+Type: filesandordirs; Name: "{autoprograms}\YouTube Video Downloader"
+Type: files; Name: "{autoprograms}\YouTube Video Downloader.lnk"
+Type: files; Name: "{autodesktop}\YouTube Video Downloader.lnk"
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
