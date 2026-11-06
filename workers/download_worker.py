@@ -4,6 +4,8 @@ import time
 import yt_dlp
 from PyQt6.QtCore import QThread, pyqtSignal
 
+from workers.errors import friendly_error
+
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 # What yt-dlp leaves behind for an output "name.ext": separate streams
 # (name.f137.mp4), merge output (name.temp.mp4), partial and state files
@@ -244,12 +246,12 @@ class DownloadWorker(QThread):
             error_msg = error_msg.split("ERROR:")[-1].strip()
         low = error_msg.lower()
         if "ffmpeg" in low and ("not found" in low or "not installed" in low):
-            error_msg = (
+            return (
                 "FFmpeg is required for this download (merging/converting) "
                 "but was not found. Place ffmpeg.exe next to the application "
                 "or install it on PATH. Details: " + error_msg
             )
-        return error_msg
+        return friendly_error(error_msg)
 
     def cancel(self):
         self._cancel_flag = True
