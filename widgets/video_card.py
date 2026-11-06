@@ -20,6 +20,7 @@ class VideoCard(QFrame):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._image = None
         self._loaded = False
+        self._fit_inside = False
         self._setup_ui()
         self.clear()
 
@@ -91,6 +92,9 @@ class VideoCard(QFrame):
         image = data.get("thumbnail_image")
         self._image = image if isinstance(image, QImage) and not image.isNull() else None
         self._loaded = True
+        # Audio-only sources usually ship square album art: letterbox it
+        # instead of cropping.
+        self._fit_inside = data.get("has_video") is False
         self._render_thumb()
 
         title = data.get("title") or "Unknown"
@@ -98,14 +102,30 @@ class VideoCard(QFrame):
             title = title[:137] + "..."
         self.title_label.setText(title)
         self.title_label.setToolTip(data.get("title") or "")
-        self.kind_label.setText("PLAYLIST" if data.get("is_playlist") else "VIDEO")
-        self.channel_label.setText(data.get("channel") or "")
+        parts = []
+        if data.get("is_playlist"):
+            parts.append("PLAYLIST")
+        else:
+            parts.append("VIDEO" if data.get("has_video", True) else "AUDIO")
+        site = data.get("site") or ""
+        if site:
+            parts.append(site.upper())
+        count = data.get("entry_count") or 0
+        if data.get("is_playlist") and count:
+            parts.append(f"{count} ITEM{'S' if count != 1 else ''}")
+        self.kind_label.setText(" · ".join(parts))
+        channel = data.get("channel") or ""
+        if channel == "Unknown":
+            channel = ""
+        self.channel_label.setText(channel)
+        self.channel_label.setVisible(bool(channel))
 
         date = data.get("upload_date") or ""
         if len(date) == 8 and date.isdigit():
             date = f"{date[:4]}-{date[4:6]}-{date[6:]}"
         views = data.get("view_count") or ""
-        self.duration_label.setText(data.get("duration") or "-")
+        duration = data.get("duration") or ""
+        self.duration_label.setText(duration if duration not in ("", "0:00", "N/A") else "-")
         self.views_label.setText(views if views and views != "N/A" else "-")
         self.date_label.setText(date or "-")
         self.stats.setVisible(True)
@@ -121,8 +141,10 @@ class VideoCard(QFrame):
         self.kind_label.setText("NO VIDEO")
         self.title_label.setText("Paste a link to get started")
         self.title_label.setToolTip("")
+        self.channel_label.setVisible(True)
         self.channel_label.setText(
-            "Video and playlist URLs are supported. Press Enter or Fetch."
+            "Links from YouTube and 1,000+ other sites are supported. "
+            "Press Enter or Fetch."
         )
         self.duration_label.setText("-")
         self.views_label.setText("-")
@@ -136,6 +158,7 @@ class VideoCard(QFrame):
         self.kind_label.setText("FETCHING")
         self.title_label.setText("Reading video information...")
         self.channel_label.setText("")
+        self.channel_label.setVisible(True)
 
     def retheme(self):
         self._render_thumb()
@@ -146,14 +169,26 @@ class VideoCard(QFrame):
         dpr = self.devicePixelRatioF() or 1.0
         w, h = int(round(THUMB_W * dpr)), int(round(THUMB_H * dpr))
         if self._image is not None:
-            # Fill the 16:9 frame exactly (crop letterboxing / 4:3 sources).
-            scaled = self._image.scaled(
-                w, h, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-            x = (scaled.width() - w) // 2
-            y = (scaled.height() - h) // 2
-            content = QPixmap.fromImage(scaled.copy(QRect(x, y, w, h)))
+            if self._fit_inside:
+                # Album art etc.: letterbox inside the frame, no cropping.
+                scaled = self._image.scaled(
+                    w, h, Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+                content = QPixmap(w, h)
+                content.fill(QColor(theme.color("raised")))
+                painter = QPainter(content)
+                painter.drawImage((w - scaled.width()) // 2, (h - scaled.height()) // 2, scaled)
+                painter.end()
+            else:
+                # Fill the 16:9 frame exactly (crop letterboxing / 4:3 sources).
+                scaled = self._image.scaled(
+                    w, h, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+                x = (scaled.width() - w) // 2
+                y = (scaled.height() - h) // 2
+                content = QPixmap.fromImage(scaled.copy(QRect(x, y, w, h)))
         else:
             content = self._placeholder(w, h)
         self.thumbnail_label.setPixmap(self._rounded(content, w, h, dpr))
