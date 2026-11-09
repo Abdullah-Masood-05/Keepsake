@@ -15,7 +15,7 @@ defaults:
     shell: bash
 
 env:
-  APP: satchel
+  APP: keepsake
   FFMPEG_REPO: Abdullah-Masood-05/ffmpeg-ytdl-minimal-build
   FFMPEG_RELEASE: v1.1.0
   NFPM_VERSION: 2.43.0

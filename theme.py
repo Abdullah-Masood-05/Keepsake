@@ -218,7 +218,7 @@ def _refresh_icons():
 
 
 def _asset_dir():
-    d = os.path.join(tempfile.gettempdir(), "Satchel-theme")
+    d = os.path.join(tempfile.gettempdir(), "Keepsake-theme")
     os.makedirs(d, exist_ok=True)
     return d
 

@@ -39,7 +39,7 @@ jobs:
         run: |
           VERSION="$(python3 -c 'import tomllib;print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "dmg=Satchel-$VERSION-macos-arm64.dmg" >> "$GITHUB_OUTPUT"
+          echo "dmg=Keepsake-$VERSION-macos-arm64.dmg" >> "$GITHUB_OUTPUT"
           echo "Version: $VERSION"
 
       # ── FFmpeg (prebuilt, from ffmpeg-ytdl-minimal-build) ───────────────
@@ -96,7 +96,7 @@ jobs:
       # ── Smoke tests ─────────────────────────────────────────────────────
       - name: Smoke test
         run: |
-          APP="build_macos/Satchel.app"
+          APP="build_macos/Keepsake.app"
           MACOS="$APP/Contents/MacOS"
           EXE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Contents/Info.plist")"
           ls -la "$MACOS" > "$RUNNER_TEMP/macos-dir.txt"; sed -n 1,60p "$RUNNER_TEMP/macos-dir.txt"
@@ -129,7 +129,7 @@ jobs:
       # ── DMG ─────────────────────────────────────────────────────────────
       - name: Create DMG
         run: |
-          packaging/macos/make_dmg.sh "build_macos/Satchel.app" "dist/${{ steps.version.outputs.dmg }}"
+          packaging/macos/make_dmg.sh "build_macos/Keepsake.app" "dist/${{ steps.version.outputs.dmg }}"
           shasum -a 256 "dist/${{ steps.version.outputs.dmg }}" | tee "dist/${{ steps.version.outputs.dmg }}.sha256"
 
       - uses: actions/upload-artifact@v4

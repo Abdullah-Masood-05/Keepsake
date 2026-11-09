@@ -1,14 +1,14 @@
 ; =====================================================================
-;  Inno Setup Script - Satchel
+;  Inno Setup Script - Keepsake
 ;  Packages the Nuitka single-file exe + ffmpeg into a Windows installer.
 ;  Build with: "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
 ; =====================================================================
 
-#define MyAppName "Satchel"
+#define MyAppName "Keepsake"
 #define MyAppVersion "2.1.1"
 #define MyAppPublisher "Abdullah Masood"
-#define MyAppURL "https://github.com/Abdullah-Masood-05/Satchel"
-#define MyAppExeName "Satchel.exe"
+#define MyAppURL "https://github.com/Abdullah-Masood-05/Keepsake"
+#define MyAppExeName "Keepsake.exe"
 #define MySourceDir "build_dist"
 #define MyFFmpegDir "ffmpeg"
 
@@ -36,7 +36,7 @@ PrivilegesRequiredOverridesAllowed=dialog
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=installer_output
-OutputBaseFilename=Satchel-Setup-{#MyAppVersion}
+OutputBaseFilename=Keepsake-Setup-{#MyAppVersion}
 SetupIconFile=resources\icons\app.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 UninstallDisplayName={#MyAppName}
@@ -60,8 +60,11 @@ Source: "{#MyFFmpegDir}\ffmpeg.exe"; DestDir: "{app}"; Flags: ignoreversion skip
 Source: "{#MyFFmpegDir}\ffprobe.exe"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
 [InstallDelete]
-; Leftovers from earlier names ("YouTube Video Downloader", then "Fetchly").
+; Leftovers from earlier names (YouTube Video Downloader, Fetchly, Satchel).
 ; Same AppId, so upgrades land in the old install folder.
+Type: files; Name: "{app}\Satchel.exe"
+Type: filesandordirs; Name: "{autoprograms}\Satchel"
+Type: files; Name: "{autodesktop}\Satchel.lnk"
 Type: files; Name: "{app}\Fetchly.exe"
 Type: filesandordirs; Name: "{autoprograms}\Fetchly"
 Type: files; Name: "{autodesktop}\Fetchly.lnk"

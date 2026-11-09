@@ -90,13 +90,13 @@ jobs:
           --include-data-files=resources\icons\app.png=resources\icons\app.png
           --windows-icon-from-ico=resources\icons\app.ico
           --company-name="Abdullah Masood"
-          --product-name="Satchel"
-          --file-description="Satchel"
+          --product-name="Keepsake"
+          --file-description="Keepsake"
           --file-version=${{ steps.version.outputs.version }}.0
           --product-version=${{ steps.version.outputs.version }}.0
           --copyright="Copyright (c) 2026 Abdullah Masood"
           --assume-yes-for-downloads
-          --output-filename=Satchel.exe
+          --output-filename=Keepsake.exe
           --output-dir=build_dist
           --remove-output
           main.py
@@ -104,11 +104,11 @@ jobs:
       - name: Smoke test (launch, stay alive 10 s)
         shell: pwsh
         run: |
-          $exe = Resolve-Path build_dist\Satchel.exe
+          $exe = Resolve-Path build_dist\Keepsake.exe
           Write-Host ("Size: {0:N1} MB" -f ((Get-Item $exe).Length / 1MB))
           $p = Start-Process -FilePath $exe -PassThru
           Start-Sleep -Seconds 10
-          $alive = Get-Process -Name Satchel -ErrorAction SilentlyContinue
+          $alive = Get-Process -Name Keepsake -ErrorAction SilentlyContinue
           if (-not $alive) {
             $p.Refresh()
             throw "App exited early (exit code: $($p.ExitCode))"
@@ -162,14 +162,14 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Satchel-installer
-          path: installer_output/Satchel-Setup-*.exe
+          name: Keepsake-installer
+          path: installer_output/Keepsake-Setup-*.exe
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Satchel-exe
-          path: build_dist/Satchel.exe
+          name: Keepsake-exe
+          path: build_dist/Keepsake.exe
           if-no-files-found: error
 
       - name: Attach to GitHub release
@@ -177,5 +177,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            installer_output/Satchel-Setup-*.exe
-            build_dist/Satchel.exe
+            installer_output/Keepsake-Setup-*.exe
+            build_dist/Keepsake.exe

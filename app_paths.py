@@ -13,9 +13,9 @@ import sys
 import shutil
 from pathlib import Path
 
-APP_DIR_NAME = "Satchel"
+APP_DIR_NAME = "Keepsake"
 # Settings folders of earlier names, newest first; migrated once.
-_OLD_APP_DIR_NAMES = ("Fetchly", "YouTubeVideoDownloader")
+_OLD_APP_DIR_NAMES = ("Satchel", "Fetchly", "YouTubeVideoDownloader")
 
 # Directory containing this source file (or the onefile extraction dir).
 BUNDLE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -48,7 +48,7 @@ def resource_path(*parts):
 
 
 def user_data_dir():
-    """Per-user writable directory, e.g. %APPDATA%\\Satchel.
+    """Per-user writable directory, e.g. %APPDATA%\\Keepsake.
 
     YTDL_CONFIG_DIR overrides it, so test runs don't touch the real settings.
     """

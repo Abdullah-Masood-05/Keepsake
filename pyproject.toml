@@ -1,5 +1,5 @@
 [project]
-name = "satchel"
+name = "keepsake"
 version = "2.1.1"
 description = "Desktop video and audio downloader for YouTube and 1,800+ other sites, built on yt-dlp and PyQt6"
 readme = "Readme.md"

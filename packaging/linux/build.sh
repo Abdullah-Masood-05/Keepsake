@@ -5,13 +5,13 @@
 #   packaging/linux/build.sh
 #
 # Output (all under build/linux/):
-#   dist/                      Nuitka standalone folder -> /opt/satchel
+#   dist/                      Nuitka standalone folder -> /opt/keepsake
 #   icons/<N>x<N>/apps/*.png   hicolor icons
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
-APP=satchel
+APP=keepsake
 OUT=build/linux
 PYTHON=${PYTHON:-.venv/bin/python}
 

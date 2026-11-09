@@ -23,9 +23,9 @@ from widgets.download_item import DownloadItemWidget
 from widgets.format_selector import FormatSelector
 from widgets.supported_sites_dialog import SupportedSitesDialog
 
-APP_TITLE = "Satchel"
+APP_TITLE = "Keepsake"
 VERSION = "2.1.1"
-APP_USER_MODEL_ID = "AbdullahMasood.Satchel"
+APP_USER_MODEL_ID = "AbdullahMasood.Keepsake"
 
 # Audio containers whose cover art yt-dlp can embed without mutagen.
 _EMBED_THUMB_AUDIO = {"mp3", "m4a"}
