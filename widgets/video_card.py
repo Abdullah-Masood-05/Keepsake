@@ -1,18 +1,64 @@
 from PyQt6.QtCore import QPointF, QRect, QRectF, Qt
-from PyQt6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
+from PyQt6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
 from PyQt6.QtWidgets import (
-    QFrame, QGridLayout, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QLabel, QSizePolicy, QStackedLayout, QVBoxLayout, QWidget,
 )
 
 import theme
-from widgets.common import ElidedLabel, section_label
+from widgets.common import ElidedLabel
+from widgets.kit import IconLabel, pick_icon, pill
 
 THUMB_W, THUMB_H = 256, 144  # 16:9
 THUMB_RADIUS = 3
 
 
+class _TwoLineLabel(QLabel):
+    """Shows at most two lines of text, eliding the second; long words
+    (URLs) are broken instead of pushing a clipped third line."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._full = ""
+
+    def setText(self, text):
+        self._full = text or ""
+        self._relayout()
+
+    def text(self):
+        return self._full
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._relayout()
+
+    def _relayout(self):
+        fm = self.fontMetrics()
+        width = max(self.width() - 2, 40)
+        text = self._full
+        if fm.horizontalAdvance(text) <= width:
+            super().setText(text)
+            return
+        # Longest prefix that fits on line one, broken at a space if one is
+        # reasonably close to the end.
+        lo, hi = 0, len(text)
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if fm.horizontalAdvance(text[:mid]) <= width:
+                lo = mid
+            else:
+                hi = mid - 1
+        cut = lo
+        space = text.rfind(" ", 0, cut + 1)
+        if space > cut * 0.6:
+            cut = space
+        first = text[:cut].rstrip()
+        second = fm.elidedText(text[cut:].lstrip(), Qt.TextElideMode.ElideRight, width)
+        super().setText(first + "\n" + second)
+
+
 class VideoCard(QFrame):
-    """Thumbnail + title/channel + stats for the fetched video."""
+    """Thumbnail + badges/title/channel + meta for the fetched video, or a
+    calm empty state while nothing is loaded."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -21,11 +67,53 @@ class VideoCard(QFrame):
         self._image = None
         self._loaded = False
         self._fit_inside = False
+        self._duration = ""
         self._setup_ui()
         self.clear()
 
     def _setup_ui(self):
-        lay = QHBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self.stack = QStackedLayout()
+        outer.addLayout(self.stack)
+        self.stack.addWidget(self._build_empty())
+        self.stack.addWidget(self._build_info())
+
+    def _build_empty(self):
+        page = QWidget()
+        page.setMinimumHeight(THUMB_H + 32)
+        lay = QHBoxLayout(page)
+        lay.setContentsMargins(16, 16, 16, 16)
+        lay.addStretch(1)
+        col = QVBoxLayout()
+        col.setSpacing(0)
+        col.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        tile = QFrame()
+        tile.setObjectName("KsIconTile")
+        tile.setFixedSize(52, 52)
+        tl = QHBoxLayout(tile)
+        tl.setContentsMargins(0, 0, 0, 0)
+        self.empty_icon = IconLabel("link", "text2", 22)
+        tl.addWidget(self.empty_icon, 0, Qt.AlignmentFlag.AlignCenter)
+        col.addWidget(tile, 0, Qt.AlignmentFlag.AlignHCenter)
+        col.addSpacing(14)
+        self.empty_title = QLabel()
+        self.empty_title.setObjectName("KsEmptyTitle")
+        self.empty_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        col.addWidget(self.empty_title)
+        col.addSpacing(4)
+        self.empty_sub = QLabel()
+        self.empty_sub.setObjectName("Faint")
+        self.empty_sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty_sub.setWordWrap(True)
+        col.addWidget(self.empty_sub)
+        lay.addLayout(col, 3)
+        lay.addStretch(1)
+        return page
+
+    def _build_info(self):
+        page = QWidget()
+        lay = QHBoxLayout(page)
         lay.setContentsMargins(16, 16, 16, 16)
         lay.setSpacing(16)
 
@@ -39,9 +127,17 @@ class VideoCard(QFrame):
         info.setContentsMargins(0, 0, 0, 0)
         info.setSpacing(0)
 
-        self.kind_label = section_label("Video")
-        info.addWidget(self.kind_label)
-        info.addSpacing(6)
+        badges = QHBoxLayout()
+        badges.setContentsMargins(0, 0, 0, 0)
+        badges.setSpacing(6)
+        self.kind_pill = pill("VIDEO", "accent")
+        self.site_pill = pill("")
+        self.count_pill = pill("")
+        for w in (self.kind_pill, self.site_pill, self.count_pill):
+            badges.addWidget(w)
+        badges.addStretch(1)
+        info.addLayout(badges)
+        info.addSpacing(10)
 
         self.title_label = QLabel()
         self.title_label.setObjectName("VideoTitle")
@@ -52,37 +148,23 @@ class VideoCard(QFrame):
         info.addSpacing(4)
 
         self.channel_label = ElidedLabel()
-        self.channel_label.setObjectName("Muted")
+        self.channel_label.setObjectName("KsChannel")
         info.addWidget(self.channel_label)
+        info.addSpacing(6)
+
+        self.meta_label = ElidedLabel()
+        self.meta_label.setObjectName("KsMeta")
+        info.addWidget(self.meta_label)
 
         info.addStretch(1)
 
-        # Stats: small caps label above a tabular value.
-        self.stats = QWidget()
-        grid = QGridLayout(self.stats)
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setHorizontalSpacing(32)
-        grid.setVerticalSpacing(4)
-        self.duration_label = QLabel()
-        self.views_label = QLabel()
-        self.date_label = QLabel()
-        for col, (name, value) in enumerate((
-            ("Duration", self.duration_label),
-            ("Views", self.views_label),
-            ("Uploaded", self.date_label),
-        )):
-            value.setObjectName("StatValue")
-            grid.addWidget(section_label(name), 0, col)
-            grid.addWidget(value, 1, col)
-        grid.setColumnStretch(3, 1)
-        info.addWidget(self.stats)
-        info.addSpacing(12)
-
-        self.desc_label = ElidedLabel()
-        self.desc_label.setObjectName("Faint")
+        self.desc_label = _TwoLineLabel()
+        self.desc_label.setObjectName("KsDesc")
+        self.desc_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         info.addWidget(self.desc_label)
 
         lay.addLayout(info, 1)
+        return page
 
     # ------------------------------------------------------------------ data
 
@@ -95,6 +177,10 @@ class VideoCard(QFrame):
         # Audio-only sources usually ship square album art: letterbox it
         # instead of cropping.
         self._fit_inside = data.get("has_video") is False
+        duration = data.get("duration") or ""
+        self._duration = duration if duration not in ("", "0:00", "N/A") else ""
+        if data.get("is_playlist"):
+            self._duration = ""
         self._render_thumb()
 
         title = data.get("title") or "Unknown"
@@ -102,18 +188,20 @@ class VideoCard(QFrame):
             title = title[:137] + "..."
         self.title_label.setText(title)
         self.title_label.setToolTip(data.get("title") or "")
-        parts = []
+
         if data.get("is_playlist"):
-            parts.append("PLAYLIST")
+            kind = "PLAYLIST"
         else:
-            parts.append("VIDEO" if data.get("has_video", True) else "AUDIO")
+            kind = "VIDEO" if data.get("has_video", True) else "AUDIO"
+        self.kind_pill.setText(kind)
         site = data.get("site") or ""
-        if site:
-            parts.append(site.upper())
+        self.site_pill.setText(site)
+        self.site_pill.setVisible(bool(site))
         count = data.get("entry_count") or 0
-        if data.get("is_playlist") and count:
-            parts.append(f"{count} ITEM{'S' if count != 1 else ''}")
-        self.kind_label.setText(" · ".join(parts))
+        show_count = bool(data.get("is_playlist") and count)
+        self.count_pill.setText(f"{count} item{'s' if count != 1 else ''}" if show_count else "")
+        self.count_pill.setVisible(show_count)
+
         channel = data.get("channel") or ""
         if channel == "Unknown":
             channel = ""
@@ -124,44 +212,41 @@ class VideoCard(QFrame):
         if len(date) == 8 and date.isdigit():
             date = f"{date[:4]}-{date[4:6]}-{date[6:]}"
         views = data.get("view_count") or ""
-        duration = data.get("duration") or ""
-        self.duration_label.setText(duration if duration not in ("", "0:00", "N/A") else "-")
-        self.views_label.setText(views if views and views != "N/A" else "-")
-        self.date_label.setText(date or "-")
-        self.stats.setVisible(True)
+        parts = []
+        if views and views != "N/A":
+            parts.append(views if "view" in str(views) else f"{views} views")
+        if date:
+            parts.append(date)
+        self.meta_label.setText("  ·  ".join(parts))
+        self.meta_label.setVisible(bool(parts))
 
         desc = " ".join((data.get("description") or "").split())
         self.desc_label.setText(desc)
         self.desc_label.setVisible(bool(desc))
+        self.stack.setCurrentIndex(1)
 
     def clear(self):
         self._image = None
         self._loaded = False
+        self._duration = ""
         self._render_thumb()
-        self.kind_label.setText("NO VIDEO")
-        self.title_label.setText("Paste a link to get started")
-        self.title_label.setToolTip("")
-        self.channel_label.setVisible(True)
-        self.channel_label.setText(
-            "Links from YouTube and 1,000+ other sites are supported. "
+        self.empty_icon.set_icon("link")
+        self.empty_title.setText("Paste a link to get started")
+        self.empty_sub.setText(
+            "Links from YouTube and 1,000+ other sites are supported.\n"
             "Press Enter or Fetch."
         )
-        self.duration_label.setText("-")
-        self.views_label.setText("-")
-        self.date_label.setText("-")
-        self.stats.setVisible(False)
-        self.desc_label.setText("")
-        self.desc_label.setVisible(False)
+        self.stack.setCurrentIndex(0)
 
     def set_loading(self):
         self.clear()
-        self.kind_label.setText("FETCHING")
-        self.title_label.setText("Reading video information...")
-        self.channel_label.setText("")
-        self.channel_label.setVisible(True)
+        self.empty_icon.set_icon(pick_icon("search", "link"))
+        self.empty_title.setText("Reading video information...")
+        self.empty_sub.setText("This usually takes a few seconds.")
 
     def retheme(self):
         self._render_thumb()
+        self.empty_icon.update()
 
     # ------------------------------------------------------------ thumbnail
 
@@ -191,7 +276,32 @@ class VideoCard(QFrame):
                 content = QPixmap.fromImage(scaled.copy(QRect(x, y, w, h)))
         else:
             content = self._placeholder(w, h)
+        if self._duration:
+            self._draw_duration(content, dpr)
         self.thumbnail_label.setPixmap(self._rounded(content, w, h, dpr))
+
+    def _draw_duration(self, pm, dpr):
+        """Duration badge in the bottom-right corner of the thumbnail."""
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        f = QFont(self.font())
+        f.setPixelSize(int(round(11 * dpr)))
+        f.setWeight(QFont.Weight.DemiBold)
+        theme.tabular(f)
+        p.setFont(f)
+        fm = p.fontMetrics()
+        bw = fm.horizontalAdvance(self._duration) + int(12 * dpr)
+        bh = fm.height() + int(4 * dpr)
+        margin = int(8 * dpr)
+        rect = QRectF(pm.width() - bw - margin, pm.height() - bh - margin, bw, bh)
+        bg = QColor(theme.color("bg"))
+        bg.setAlpha(225)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(bg)
+        p.drawRoundedRect(rect, 3 * dpr, 3 * dpr)
+        p.setPen(QColor(theme.color("text")))
+        p.drawText(rect, int(Qt.AlignmentFlag.AlignCenter), self._duration)
+        p.end()
 
     @staticmethod
     def _rounded(content, w, h, dpr):
@@ -226,15 +336,13 @@ class VideoCard(QFrame):
         s = h * 0.18
         cx, cy = w / 2, h / 2
         # Slightly rounded tile with a play triangle, echoing the logo.
-        tile = QColor(theme.color("border_strong" if not self._loaded else "border"))
-        p.setBrush(tile)
+        p.setBrush(QColor(theme.color("border_strong" if not self._loaded else "border")))
         p.drawRoundedRect(QRectF(cx - s, cy - s * 0.72, 2 * s, 1.44 * s), s * 0.12, s * 0.12)
         p.setBrush(QColor(theme.color("raised")))
-        tri = QPolygonF([
+        p.drawPolygon(QPolygonF([
             QPointF(cx - s * 0.30, cy - s * 0.38),
             QPointF(cx - s * 0.30, cy + s * 0.38),
             QPointF(cx + s * 0.40, cy),
-        ])
-        p.drawPolygon(tri)
+        ]))
         p.end()
         return pm

@@ -1,15 +1,92 @@
-from PyQt6.QtCore import QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QPainter
+from PyQt6.QtCore import QRectF, QSize, Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QFont, QPainter, QPen
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QComboBox, QHBoxLayout, QHeaderView, QLabel,
-    QSizePolicy, QStackedWidget, QTableWidget, QTableWidgetItem, QVBoxLayout,
-    QWidget,
+    QAbstractButton, QAbstractItemView, QCheckBox, QComboBox, QGridLayout,
+    QHBoxLayout, QHeaderView, QLabel, QSizePolicy, QStackedWidget, QTableWidget,
+    QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 import theme
 from widgets.common import ElidedLabel, Segmented, section_label
+from widgets.kit import Disclosure
 
 MODES = ("Video", "Audio", "Thumbnail")
+CHIP_COLUMNS = 4
+
+
+class _QualityChip(QAbstractButton):
+    """Selectable quality card: resolution on top, name/size underneath."""
+
+    def __init__(self, title, sub="", parent=None):
+        super().__init__(parent)
+        self._title = title
+        self._sub = sub
+        self.setCheckable(True)
+        self.setAutoExclusive(False)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setFixedHeight(46)
+        self.setMinimumWidth(0)
+
+    def sizeHint(self):
+        return QSize(110, 46)
+
+    def minimumSizeHint(self):
+        return QSize(0, 46)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        on = self.isChecked() and self.isEnabled()
+        if not self.isEnabled():
+            bg, border, t1, t2 = "input", "border", "text3", "text3"
+        elif on:
+            bg, border, t1, t2 = "selection", "accent_line", "text", "text2"
+        elif self.underMouse():
+            bg, border, t1, t2 = "hover", "border_strong", "text", "text2"
+        else:
+            bg, border, t1, t2 = "input", "border", "text", "text3"
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        p.setBrush(QColor(theme.color(bg)))
+        p.setPen(QPen(QColor(theme.color(border)), 1))
+        p.drawRoundedRect(rect, 3, 3)
+        inner = rect.adjusted(12, 0, -10, 0)
+        f1 = QFont(self.font())
+        f1.setPixelSize(14)
+        f1.setWeight(QFont.Weight.DemiBold)
+        f2 = QFont(self.font())
+        f2.setPixelSize(11)
+        fm1, fm2 = p.fontMetrics(), p.fontMetrics()
+        p.setFont(f1)
+        fm1 = p.fontMetrics()
+        p.setFont(f2)
+        fm2 = p.fontMetrics()
+        h1, h2 = fm1.height(), fm2.height() if self._sub else 0
+        top = (rect.height() - (h1 + h2 + (1 if self._sub else 0))) / 2 + rect.top()
+        p.setFont(f1)
+        p.setPen(QColor(theme.color(t1)))
+        p.drawText(QRectF(inner.left(), top, inner.width(), h1),
+                   int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+                   fm1.elidedText(self._title, Qt.TextElideMode.ElideRight, int(inner.width())))
+        if self._sub:
+            p.setFont(f2)
+            p.setPen(QColor(theme.color(t2)))
+            p.drawText(QRectF(inner.left(), top + h1 + 1, inner.width(), h2),
+                       int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+                       fm2.elidedText(self._sub, Qt.TextElideMode.ElideRight, int(inner.width())))
+        if self.hasFocus():
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(QColor(theme.color("accent_line")), 1, Qt.PenStyle.DotLine))
+            p.drawRoundedRect(rect.adjusted(2, 2, -2, -2), 2, 2)
+        p.end()
+
+    def enterEvent(self, event):
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.update()
+        super().leaveEvent(event)
 
 
 class _StreamTable(QTableWidget):
@@ -123,19 +200,27 @@ class FormatSelector(QWidget):
         top.addWidget(self.options_stack, 1, Qt.AlignmentFlag.AlignBottom)
         layout.addLayout(top)
 
-        # Format table (optional manual pick of a specific stream).
+        # Video section: quality chips + collapsible stream table.
         self.formats_box = QWidget()
         fb = QVBoxLayout(self.formats_box)
         fb.setContentsMargins(0, 0, 0, 0)
         fb.setSpacing(8)
-        head = QHBoxLayout()
-        head.setContentsMargins(0, 0, 0, 0)
-        head.addWidget(section_label("Streams"))
-        head.addStretch(1)
-        hint = QLabel("Optional: pick a specific stream, otherwise the quality above is used")
-        hint.setObjectName("Faint")
-        head.addWidget(hint)
-        fb.addLayout(head)
+        fb.addWidget(section_label("Quality"))
+        self.chip_host = QWidget()
+        self.chip_grid = QGridLayout(self.chip_host)
+        self.chip_grid.setContentsMargins(0, 0, 0, 0)
+        self.chip_grid.setSpacing(8)
+        for c in range(CHIP_COLUMNS):
+            self.chip_grid.setColumnStretch(c, 1)
+        fb.addWidget(self.chip_host)
+        self._chips = []
+        self._quality_meta = []
+        fb.addSpacing(6)
+
+        self.streams_head = Disclosure("Streams")
+        self.streams_head.hint.setText("Optional: pick a specific stream")
+        self.streams_head.toggled.connect(self._on_streams_toggled)
+        fb.addWidget(self.streams_head)
 
         self.format_table = _StreamTable()
         self.format_table.setObjectName("FormatTable")
@@ -172,9 +257,23 @@ class FormatSelector(QWidget):
         self.selected_label = ElidedLabel("Automatic")
         self.selected_label.setObjectName("Muted")
         sel.addWidget(self.selected_label, 1)
-        fb.addWidget(_TableHolder(self.format_table, sel_row), 1)
+        self.streams_body = _TableHolder(self.format_table, sel_row)
+        self.streams_body.setVisible(False)
+        fb.addWidget(self.streams_body, 1)
 
-        layout.addWidget(self.formats_box, 1)
+        layout.addWidget(self.formats_box)
+        self._tail_index = layout.count()
+        layout.addStretch(1)
+        self._root_layout = layout
+        self._on_streams_toggled(False)
+        self._rebuild_chips()
+
+    def _on_streams_toggled(self, opened):
+        self.streams_body.setVisible(opened)
+        # Give the table all spare height while open, otherwise keep the
+        # content packed at the top.
+        self._root_layout.setStretch(self._tail_index - 1, 1 if opened else 0)
+        self._root_layout.setStretch(self._tail_index, 0 if opened else 1)
 
     def _create_video_options(self):
         w = QWidget()
@@ -182,20 +281,16 @@ class FormatSelector(QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(16)
 
-        # Narrow minimum so the row fits the smallest window; grows (up to
-        # 280px) when there is room for long labels like "1080p60 Full HD".
+        # The combo is the data model behind the quality chips (and keeps
+        # get_video_options()/stream filtering simple); it is never shown.
         self.video_quality = _combo(180)
-        self.video_quality.setMaximumWidth(280)
+        self.video_quality.setParent(self)
+        self.video_quality.hide()
         self.video_quality.currentIndexChanged.connect(self._on_video_quality_changed)
+        self.video_quality.currentIndexChanged.connect(self._sync_chips)
         self._reset_quality_combo()
-        quality_field = _field("Quality", self.video_quality)
-        quality_field.setMaximumWidth(280)
-        quality_field.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        lay.addWidget(quality_field, 4)
 
         # A lone QRadioButton can never be unchecked again; use a checkbox.
-        # Short label: the row (mode switch + quality + this) must fit the
-        # narrowest workspace without clipping; details live in the tooltip.
         self.h264_check = QCheckBox("Prefer H.264")
         self.h264_check.setCursor(Qt.CursorShape.PointingHandCursor)
         self.h264_check.setToolTip(
@@ -207,6 +302,29 @@ class FormatSelector(QWidget):
         lay.addWidget(self.h264_check, 0, Qt.AlignmentFlag.AlignBottom)
         lay.addStretch(1)
         return w
+
+    # ------------------------------------------------------------- chips
+
+    def _rebuild_chips(self):
+        for chip in self._chips:
+            self.chip_grid.removeWidget(chip)
+            chip.setParent(None)
+            chip.deleteLater()
+        self._chips = []
+        enabled = self.video_quality.isEnabled()
+        for i, (title, sub, tip) in enumerate(self._quality_meta):
+            chip = _QualityChip(title, sub)
+            chip.setToolTip(tip)
+            chip.setEnabled(enabled)
+            chip.clicked.connect(lambda _=False, idx=i: self.video_quality.setCurrentIndex(idx))
+            self.chip_grid.addWidget(chip, i // CHIP_COLUMNS, i % CHIP_COLUMNS)
+            self._chips.append(chip)
+        self._sync_chips()
+
+    def _sync_chips(self, *_):
+        cur = self.video_quality.currentIndex()
+        for i, chip in enumerate(self._chips):
+            chip.setChecked(i == cur)
 
     def _create_audio_options(self):
         w = QWidget()
@@ -244,8 +362,8 @@ class FormatSelector(QWidget):
         if not checked:
             return
         self.options_stack.setCurrentIndex(idx)
-        # The stream table only applies to video downloads.
-        self.formats_box.setEnabled(idx == 0)
+        # Quality + streams only apply to video downloads.
+        self.formats_box.setVisible(idx == 0)
         self.mode_changed.emit(idx)
 
     def get_mode(self):
@@ -284,8 +402,12 @@ class FormatSelector(QWidget):
         self.video_quality.blockSignals(True)
         self.video_quality.clear()
         self.video_quality.addItem("Best available", 0)
+        meta = [("Best", "Highest available", "Highest quality the site offers")]
         for q in qualities:
+            title, sub, tip = self._quality_parts(q)
             self.video_quality.addItem(self._quality_label(q), q["height"])
+            meta.append((title, sub, tip))
+        self._quality_meta = meta
 
         # Default: highest quality up to 1080p, otherwise Best available
         default_index = 0
@@ -296,6 +418,7 @@ class FormatSelector(QWidget):
         self.video_quality.setCurrentIndex(default_index)
         self.video_quality.setEnabled(True)
         self.video_quality.blockSignals(False)
+        self._rebuild_chips()
         self._on_video_quality_changed(default_index)
 
     def _reset_quality_combo(self):
@@ -305,6 +428,9 @@ class FormatSelector(QWidget):
         self.video_quality.setCurrentIndex(0)
         self.video_quality.setEnabled(False)
         self.video_quality.blockSignals(False)
+        self._quality_meta = [("Fetch a video first", "", "")]
+        if hasattr(self, "chip_grid"):
+            self._rebuild_chips()
 
     @staticmethod
     def _qualities_from_formats(formats):
@@ -319,6 +445,21 @@ class FormatSelector(QWidget):
             except (TypeError, ValueError):
                 pass
         return sorted(by_height.values(), key=lambda q: -q["height"])
+
+    @staticmethod
+    def _quality_parts(q):
+        names = {4320: "8K", 2160: "4K", 1440: "QHD", 1080: "Full HD", 720: "HD"}
+        height = q["height"]
+        fps = q.get("fps", 0)
+        title = f"{height}p"
+        if fps and fps > 30:
+            title += f"{fps}"
+        sub = names.get(height, "")
+        size = q.get("filesize", 0)
+        if size:
+            sz = f"~{FormatSelector._format_size(size)}"
+            sub = f"{sub}  ·  {sz}" if sub else sz
+        return title, sub, FormatSelector._quality_label(q).replace("  ", " ")
 
     @staticmethod
     def _quality_label(q):
@@ -369,6 +510,10 @@ class FormatSelector(QWidget):
 
     def _on_selection_changed(self):
         fmt = self.get_selected_format()
+        self.streams_head.hint.setText(
+            f"{fmt['resolution']}  {fmt['ext']}  (id {fmt['format_id']})" if fmt
+            else "Optional: pick a specific stream"
+        )
         if fmt:
             self.selected_label.setText(
                 f"{fmt['resolution']}  {fmt['ext']}  {fmt['fmt_type']}  {fmt['filesize_str']}"
