@@ -1,12 +1,13 @@
 """Shared helpers and styles for the pages."""
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtGui import QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget, QFrame,
 )
 
 import theme
+from widgets import motion
 
 PAGE_MAX_W = 900
 PAGE_PAD = 32
@@ -219,3 +220,83 @@ QLineEdit#SearchInput {{
 
 
 theme.register_qss(_qss)
+
+
+class SnapshotOverlay(QWidget):
+    """Paints a pixmap of a widget's previous look on top of it, with an
+    opacity and x offset we can animate. Cheap: one drawPixmap per frame,
+    no graphics effects on the (large) real widgets underneath."""
+
+    def __init__(self, host, pixmap):
+        super().__init__(host)
+        self.setObjectName("SnapshotOverlay")
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._pm = pixmap
+        self._opacity = 1.0
+        self._dx = 0
+        self.setGeometry(host.rect())
+        self.show()
+        self.raise_()
+
+    def set_state(self, opacity, dx=0):
+        self._opacity = opacity
+        self._dx = dx
+        self.update()
+
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        p.setOpacity(self._opacity)
+        p.drawPixmap(int(self._dx), 0, self._pm)
+
+
+class PageTransition:
+    """Crossfade + short slide when a QStackedWidget changes page."""
+
+    SLIDE_IN = 14     # px the new page travels
+    SLIDE_OUT = 8     # px the old snapshot drifts the other way
+
+    def __init__(self, stack):
+        self.stack = stack
+        self._overlay = None
+        self._page = None
+        self._anim = None
+
+    def finish(self):
+        """Snap any running transition to its end state."""
+        if self._anim is not None:
+            self._anim.stop()
+            self._anim = None
+        if self._overlay is not None:
+            self._overlay.hide()
+            self._overlay.deleteLater()
+            self._overlay = None
+        if self._page is not None:
+            self._page.move(0, 0)
+            self._page = None
+
+    def go(self, index):
+        stack = self.stack
+        self.finish()
+        old_index = stack.currentIndex()
+        if (index == old_index or not stack.isVisible() or motion.REDUCED
+                or stack.currentWidget() is None):
+            stack.setCurrentIndex(index)
+            return
+        snap = stack.currentWidget().grab()
+        stack.setCurrentIndex(index)
+        new = stack.currentWidget()
+        direction = 1 if index > old_index else -1
+        overlay = SnapshotOverlay(stack, snap)
+        self._overlay, self._page = overlay, new
+
+        def step(t):
+            overlay.set_state(1.0 - t, -direction * self.SLIDE_OUT * t)
+            new.move(int(direction * self.SLIDE_IN * (1.0 - t)), 0)
+
+        step(0.0)
+        self._anim = motion.tween(stack, 0.0, 1.0, step, ms=motion.BASE,
+                                  finished=self._done, key="_anim_page")
+
+    def _done(self):
+        self._anim = None
+        self.finish()

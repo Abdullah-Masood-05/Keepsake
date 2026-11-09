@@ -2,7 +2,7 @@
 
 import os
 
-from PyQt6.QtCore import QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QPoint, QRect, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QIcon, QPixmap
 from PyQt6.QtWidgets import (
     QButtonGroup, QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout,
@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
 
 import app_paths
 import theme
+from widgets import motion
 from widgets.common import icon_button
 
 NAV_ITEMS = [("Home", "home"), ("Downloads", "downloads"),
@@ -30,17 +31,36 @@ class NavButton(QPushButton):
         self.badge.setObjectName("NavBadge")
         self.badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.badge.hide()
+        self._badge_n = 0
+        self._badge_w = 18
 
     def set_badge(self, n):
+        prev = self._badge_n
+        self._badge_n = n
         self.badge.setVisible(n > 0)
         self.badge.setText(str(n) if n < 100 else "99+")
         self.badge.adjustSize()
-        self.badge.setFixedSize(max(18, self.badge.width() + 2), 18)
+        self._badge_w = max(18, self.badge.width() + 2)
         self._place_badge()
+        if n > prev and self.isVisible():
+            self._pop_badge()
+
+    def _badge_rect(self, scale=1.0):
+        w, h = self._badge_w, 18
+        sw, sh = max(1, round(w * scale)), max(1, round(h * scale))
+        cx = self.width() - 12 - w / 2
+        cy = self.height() / 2
+        return QRect(round(cx - sw / 2), round(cy - sh / 2), sw, sh)
 
     def _place_badge(self):
-        self.badge.move(self.width() - self.badge.width() - 12,
-                        (self.height() - self.badge.height()) // 2)
+        self.badge.setGeometry(self._badge_rect())
+
+    def _pop_badge(self):
+        """Scale up from 75% with a slight overshoot."""
+        motion.tween(self, 0.75, 1.0,
+                     lambda v: self.badge.setGeometry(self._badge_rect(v)),
+                     ms=motion.BASE, curve=motion.EASE_SPRING,
+                     finished=self._place_badge, key="_anim_badge")
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
@@ -117,6 +137,14 @@ class Sidebar(QFrame):
             nav.addWidget(b)
         self.buttons[0].setChecked(True)
         self.group.idClicked.connect(self.page_requested)
+        # Accent bar that slides between items (the buttons' own left border
+        # stays transparent and just reserves the space).
+        self.indicator = QFrame(self)
+        self.indicator.setObjectName("NavIndicator")
+        self.indicator.setFixedWidth(3)
+        self.indicator.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.indicator.resize(3, 38)
+        self.group.idToggled.connect(self._on_toggled)
         lay.addLayout(nav)
         lay.addStretch(1)
 
@@ -143,6 +171,35 @@ class Sidebar(QFrame):
 
     def set_page(self, i):
         self.buttons[i].setChecked(True)
+
+    def _target_pos(self):
+        b = self.group.checkedButton()
+        return b.pos() if b is not None else QPoint(0, 0)
+
+    def _snap_indicator(self):
+        self.layout().activate()
+        self.indicator.setFixedHeight(self.buttons[0].height())
+        self.indicator.move(self._target_pos())
+        self.indicator.raise_()
+
+    def _on_toggled(self, _i, checked):
+        if not checked:
+            return
+        if not self.isVisible() or motion.REDUCED:
+            self._snap_indicator()
+            return
+        self.layout().activate()
+        motion.animate(self.indicator, b"pos", None, self._target_pos(),
+                       ms=motion.BASE, curve=motion.EASE_IN_OUT)
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self._snap_indicator()
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        if self.isVisible():
+            self._snap_indicator()
 
     def set_badge(self, index, n):
         self.buttons[index].set_badge(n)
@@ -202,7 +259,10 @@ QPushButton#NavItem:pressed {{
 QPushButton#NavItem:checked {{
     background-color: {p['raised']};
     color: {p['text']};
-    border-left: 3px solid {p['accent_line']};
+}}
+QFrame#NavIndicator {{
+    background-color: {p['accent_line']};
+    border: none;
 }}
 QPushButton#NavItem:focus {{
     background-color: {p['hover']};

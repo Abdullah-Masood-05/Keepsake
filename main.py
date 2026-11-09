@@ -25,6 +25,8 @@ from pages.home import HomePage
 from pages.downloads import DownloadsPage
 from pages.history import HistoryPage, parse_history
 from pages.settings import SettingsPage
+from pages.common import PageTransition, SnapshotOverlay
+from widgets import motion
 
 APP_TITLE = "Keepsake"
 VERSION = "2.1.1"
@@ -127,6 +129,8 @@ class MainWindow(QMainWindow):
 
         self.page_stack = QStackedWidget()
         self.page_stack.setObjectName("Workspace")
+        self._page_transition = PageTransition(self.page_stack)
+        self._theme_overlay = None
         root.addWidget(self.page_stack, 1)
 
         # --- Home -------------------------------------------------------
@@ -179,7 +183,7 @@ class MainWindow(QMainWindow):
             sc.activated.connect(lambda i=i: self._go_page(i))
 
     def _go_page(self, index):
-        self.page_stack.setCurrentIndex(index)
+        self._page_transition.go(index)
         self.sidebar.set_page(index)
         if index == PAGE_HISTORY:
             self._refresh_history()
@@ -203,7 +207,25 @@ class MainWindow(QMainWindow):
         self.theme = name
         self.config["theme"] = name
         config_manager.save(self.config)
+        # Crossfade: snapshot the old look, restyle underneath, fade it out.
+        central = self.centralWidget()
+        self._page_transition.finish()
+        if self._theme_overlay is not None:
+            self._theme_overlay.deleteLater()
+            self._theme_overlay = None
+        overlay = None
+        if self.isVisible() and not motion.REDUCED:
+            overlay = SnapshotOverlay(central, central.grab())
+            self._theme_overlay = overlay
         self._apply_theme()
+        if overlay is not None:
+            def done():
+                if self._theme_overlay is overlay:
+                    self._theme_overlay = None
+                overlay.hide()
+                overlay.deleteLater()
+            motion.tween(central, 1.0, 0.0, overlay.set_state, ms=motion.BASE,
+                         curve=motion.EASE_IN_OUT, finished=done, key="_anim_theme")
 
     def _apply_theme(self):
         app = QApplication.instance()

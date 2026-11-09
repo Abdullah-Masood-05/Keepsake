@@ -1,9 +1,10 @@
 """Small bottom-right notifications (modelled on the Tauri Toasts.tsx)."""
 
-from PyQt6.QtCore import QEvent, QObject, QTimer, Qt
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PyQt6.QtCore import QEvent, QObject, QPoint, QTimer, Qt
+from PyQt6.QtWidgets import QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 import theme
+from widgets import motion
 from widgets.common import ElidedLabel, icon_button
 
 _KIND_ICON = {"success": "check_circle", "error": "x_circle",
@@ -15,6 +16,7 @@ _MARGIN = 16
 _BOTTOM_CLEAR = 88
 _GAP = 8
 _WIDTH = 340
+_SLIDE = 36     # px a toast travels when entering / leaving
 
 
 class Toast(QFrame):
@@ -25,6 +27,12 @@ class Toast(QFrame):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setFixedWidth(_WIDTH)
         self._kind = kind
+        self._placed = False
+        self._target = QPoint()
+        # Toasts are small, so a persistent opacity effect is cheap.
+        self.fx = QGraphicsOpacityEffect(self)
+        self.fx.setOpacity(0.0 if not motion.REDUCED else 1.0)
+        self.setGraphicsEffect(self.fx)
         self._on_close = on_close
         lay = QHBoxLayout(self)
         lay.setContentsMargins(12, 10, 8, 10)
@@ -92,20 +100,38 @@ class ToastManager(QObject):
         return t
 
     def _remove(self, t):
-        if t in self._toasts:
-            self._toasts.remove(t)
-            t.hide()
-            t.deleteLater()
-            self._layout()
+        if t not in self._toasts:
+            return
+        self._toasts.remove(t)
+        t._timer.stop()
+        t.setEnabled(False)
+        # Slide right and fade, then delete; the others restack immediately.
+        motion.animate(t.fx, b"opacity", None, 0.0, ms=motion.FAST,
+                       curve=motion.EASE_IN_OUT)
+        motion.animate(t, b"pos", None, t.pos() + QPoint(_SLIDE, 0),
+                       ms=motion.FAST, curve=motion.EASE_IN_OUT,
+                       finished=t.deleteLater)
+        self._layout()
 
-    def _layout(self):
+    def _layout(self, animate=True):
         y = self._host.height() - _BOTTOM_CLEAR
         for t in reversed(self._toasts):
             t.adjustSize()
             y -= t.height()
-            t.move(self._host.width() - _MARGIN - t.width(), y)
-            t.raise_()
+            target = QPoint(self._host.width() - _MARGIN - t.width(), y)
             y -= _GAP
+            t.raise_()
+            if not animate or motion.REDUCED:
+                t.move(target)
+                t.fx.setOpacity(1.0)
+            elif not t._placed:
+                t.move(target + QPoint(_SLIDE, 0))
+                motion.animate(t, b"pos", None, target, ms=motion.BASE)
+                motion.animate(t.fx, b"opacity", 0.0, 1.0, ms=motion.BASE)
+            elif target != t._target:
+                motion.animate(t, b"pos", None, target, ms=motion.BASE)
+            t._placed = True
+            t._target = target
 
     def retheme(self):
         for t in self._toasts:
@@ -113,7 +139,7 @@ class ToastManager(QObject):
 
     def eventFilter(self, obj, event):
         if obj is self._host and event.type() == QEvent.Type.Resize:
-            self._layout()
+            self._layout(animate=False)
         return False
 
 
