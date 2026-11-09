@@ -2,17 +2,94 @@ import os
 import subprocess
 import sys
 
-from PyQt6.QtCore import QRectF, QSize, QUrl, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QDesktopServices, QImage, QPainter, QPainterPath, QPixmap
+from PyQt6.QtCore import QEasingCurve, QRectF, QSize, QTimer, QUrl, Qt, pyqtSignal
+from PyQt6.QtGui import (
+    QColor, QDesktopServices, QImage, QLinearGradient, QPainter, QPainterPath, QPixmap,
+)
 from PyQt6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QProgressBar, QSizePolicy, QVBoxLayout, QWidget,
 )
 
+import math
+
 import theme
+from widgets import motion
 from widgets.common import ElidedLabel, icon_button
-from widgets.kit import IconLabel, pick_icon, repolish
+from widgets.kit import IconLabel, Ticker, pick_icon, repolish
 
 THUMB_W, THUMB_H = 64, 36
+BAR_H = 3
+BAR_GAP = 8
+BAR_MAX = 1000  # internal resolution: sub-percent steps keep the fill smooth
+
+
+class _Bar(QProgressBar):
+    """Slim progress bar (styled by the KsBar QSS) that can also show a moving
+    highlight while the real progress is unknown or being post-processed."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._busy = False
+        self._phase = 0.0
+        # ~30fps and only while busy and visible: cheap with many rows.
+        self._ticker = Ticker(self, self._set_phase, period=1300, interval=33)
+
+    def set_busy(self, busy):
+        busy = bool(busy) and not motion.REDUCED
+        if busy == self._busy:
+            return
+        self._busy = busy
+        if busy and self.isVisible():
+            self._ticker.start()
+        else:
+            self._ticker.stop()
+        self.update()
+
+    def _set_phase(self, v):
+        self._phase = v
+        self.update()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._busy:
+            self._ticker.start()
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        self._ticker.stop()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if not self._busy:
+            return
+        w, h = self.width(), self.height()
+        filled = w * (self.value() - self.minimum()) / max(1, self.maximum() - self.minimum())
+        # Ease the band across so it lingers at neither end.
+        t = 0.5 - 0.5 * math.cos(self._phase * 2 * math.pi)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        clip = QPainterPath()
+        clip.addRoundedRect(QRectF(0, 0, filled if filled > 1 else w, h), 2, 2)
+        p.setClipPath(clip)
+        if filled > 1:
+            # Post-processing: a soft light glides over the finished fill.
+            band = max(40.0, filled * 0.4)
+            x = -band + t * (filled + band)
+            col = QColor(theme.color("text"))
+            col.setAlpha(90)
+        else:
+            # Waiting to start: an accent segment glides along the track.
+            band = max(48.0, w * 0.3)
+            x = -band + t * (w + band)
+            col = QColor(theme.color("accent"))
+        clear = QColor(col)
+        clear.setAlpha(0)
+        grad = QLinearGradient(x, 0, x + band, 0)
+        grad.setColorAt(0.0, clear)
+        grad.setColorAt(0.5, col)
+        grad.setColorAt(1.0, clear)
+        p.fillRect(QRectF(0, 0, w, h), grad)
+        p.end()
 
 
 def _format_size(n):
@@ -144,16 +221,24 @@ class DownloadItemWidget(QFrame):
         line.addWidget(self.meta_label, 1)
         col.addLayout(line)
 
-        self.progress_bar = QProgressBar()
+        # The bar sits in a host that owns the gap above it, so the whole
+        # strip can collapse smoothly once the row is finished.
+        self.bar_host = QWidget()
+        self.bar_host.setFixedHeight(BAR_GAP + BAR_H)
+        host = QVBoxLayout(self.bar_host)
+        host.setContentsMargins(0, BAR_GAP, 0, 0)
+        host.setSpacing(0)
+        self.progress_bar = _Bar()
         self.progress_bar.setObjectName("KsBar")
-        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setRange(0, BAR_MAX)
         self.progress_bar.setValue(0)
         self.progress_bar.setTextVisible(False)
-        self.progress_bar.setFixedHeight(3)
-        self._bar_gap = 8
-        col.addSpacing(self._bar_gap)
-        col.addWidget(self.progress_bar)
+        self.progress_bar.setFixedHeight(BAR_H)
+        host.addWidget(self.progress_bar, 0, Qt.AlignmentFlag.AlignTop)
+        col.addWidget(self.bar_host)
         root.addLayout(col, 1)
+        self._root = root
+        self._target = 0  # latest requested fill, 0..BAR_MAX; never decreases
 
         self.percent_label = QLabel("")
         self.percent_label.setObjectName("KsRowPct")
@@ -227,8 +312,30 @@ class DownloadItemWidget(QFrame):
         for w in (self.status_label, self.progress_bar):
             w.setProperty("state", "queued" if (w is self.progress_bar and state == "queued") else state)
             repolish(w)
-        self.progress_bar.setVisible(not self._finished)
+        if not self._finished:
+            self.bar_host.setVisible(True)
+            self.bar_host.setFixedHeight(BAR_GAP + BAR_H)
         self._sync_buttons()
+
+    def _set_busy(self, busy):
+        self.progress_bar.set_busy(busy and not self._finished)
+
+    def _glide_to(self, units):
+        """Move the fill to ``units`` (0..BAR_MAX) without ever going back."""
+        units = max(self._target, min(BAR_MAX, int(round(units))))
+        self._target = units
+        bar = self.progress_bar
+        cur = bar.value()
+        if units == cur:
+            return
+        if not self.isVisible() or motion.REDUCED or units - cur < 4:
+            anim = getattr(self, "_anim_glide", None)
+            if anim is not None:
+                anim.stop()
+            bar.setValue(units)
+            return
+        motion.tween(self, cur, units, lambda v: bar.setValue(int(v)),
+                     ms=motion.BASE, curve=motion.EASE_OUT, key="_anim_glide")
 
     def _sync_buttons(self):
         fin = self._finished
@@ -267,7 +374,8 @@ class DownloadItemWidget(QFrame):
             return
         try:
             val = float(percent_str.replace("%", "").strip())
-            self.progress_bar.setValue(max(0, min(100, int(round(val)))))
+            self._glide_to(max(0.0, min(100.0, val)) * (BAR_MAX / 100))
+            self._set_busy(False)
             self.percent_label.setText(f"{val:.0f}%")
         except (ValueError, AttributeError):
             pass
@@ -285,12 +393,17 @@ class DownloadItemWidget(QFrame):
             return
         self.status_label.setText(text)
         low = text.lower()
-        self._apply_state("queued" if low.startswith(("queued", "waiting")) else "active")
+        queued = low.startswith(("queued", "waiting"))
+        self._apply_state("queued" if queued else "active")
+        # "Starting", "Processing", "Merging"...: no percent to show, so keep
+        # the bar visibly alive.
+        self._set_busy(not queued)
         self._refresh_meta()
 
     def set_complete(self, title, path=""):
         self.result_path = path or ""
-        self.progress_bar.setValue(100)
+        self._set_busy(False)
+        self._glide_to(BAR_MAX)
         self.percent_label.setText("100%")
         self.title_label.setText(title)
         self.title_label.setToolTip(title)
@@ -310,6 +423,7 @@ class DownloadItemWidget(QFrame):
         self._finish()
         self._apply_state("done")
         self._refresh_meta()
+        self._settle_row(pop=True, delay=motion.BASE)
 
     def set_error(self, message):
         self.percent_label.setText("")
@@ -320,6 +434,9 @@ class DownloadItemWidget(QFrame):
         self._finish()
         self._apply_state("error")
         self._refresh_meta()
+        self._settle_row(pop=True, shake=True)
+        if self.isVisible():
+            motion.fade_in(self.status_label, ms=motion.BASE)
 
     def set_cancelled(self):
         self.status_label.setText("Cancelled")
@@ -328,6 +445,58 @@ class DownloadItemWidget(QFrame):
         self._finish()
         self._apply_state("cancelled")
         self._refresh_meta()
+        self._settle_row()
+
+    # ------------------------------------------------------------ finishing
+
+    def _settle_row(self, pop=False, shake=False, delay=0):
+        """Collapse the bar strip, then (optionally) pop the status icon and
+        nudge the row. Does nothing fancy when the row isn't on screen."""
+        self._set_busy(False)
+        if not self.isVisible() or motion.REDUCED:
+            self.bar_host.setVisible(False)
+            return
+        if pop:
+            self._pop_icon()
+        if shake:
+            self._shake()
+        # Let a final glide to 100% be seen before the bar goes away.
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.timeout.connect(self._collapse_bar)
+        timer.start(delay)
+
+    def _collapse_bar(self):
+        host = self.bar_host
+        if not self._finished:
+            return
+
+        def done():
+            host.setVisible(False)
+            host.setFixedHeight(BAR_GAP + BAR_H)
+
+        motion.tween(self, host.height(), 0, lambda v: host.setFixedHeight(max(0, round(v))),
+                     ms=motion.BASE, curve=motion.EASE_IN_OUT, finished=done,
+                     key="_anim_collapse")
+
+    def _pop_icon(self):
+        icon = self.status_icon
+        motion.tween(
+            self, 0.4, 1.0, lambda v: icon.set_scale(v, alpha=v * 2),
+            ms=motion.BASE + 60, curve=motion.EASE_SPRING,
+            finished=lambda: icon.set_scale(1.0, alpha=1.0), key="_anim_pop",
+        )
+
+    def _shake(self):
+        """One quick damped left-right wobble of the row's contents."""
+        def on_value(t):
+            dx = round(3 * math.sin(t * 4 * math.pi) * (1 - t))
+            self._root.setContentsMargins(16 + dx, 12, 12 - dx, 12)
+
+        motion.tween(self, 0.0, 1.0, on_value, ms=motion.BASE + 60,
+                     curve=QEasingCurve.Type.Linear,
+                     finished=lambda: self._root.setContentsMargins(16, 12, 12, 12),
+                     key="_anim_shake")
 
     def _site_only_meta(self):
         # An error message is long; keep the meta line out of its way.

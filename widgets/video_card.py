@@ -5,8 +5,9 @@ from PyQt6.QtWidgets import (
 )
 
 import theme
+from widgets import motion
 from widgets.common import ElidedLabel
-from widgets.kit import IconLabel, pick_icon, pill
+from widgets.kit import IconLabel, Skeleton, pick_icon, pill
 
 THUMB_W, THUMB_H = 256, 144  # 16:9
 THUMB_RADIUS = 3
@@ -56,6 +57,26 @@ class _TwoLineLabel(QLabel):
         super().setText(first + "\n" + second)
 
 
+class _CardSkeleton(Skeleton):
+    """Loading placeholder that mirrors the real card layout."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumHeight(THUMB_H + 32)
+
+    def blocks(self):
+        x0 = 16 + THUMB_W + 16
+        avail = max(self.width() - x0 - 16, 80)
+        r = QRectF
+        return [
+            (r(16, 16, THUMB_W, THUMB_H), THUMB_RADIUS),
+            (r(x0, 16, 56, 20), 3), (r(x0 + 62, 16, 64, 20), 3),
+            (r(x0, 46, avail * 0.85, 16), 3), (r(x0, 68, avail * 0.55, 16), 3),
+            (r(x0, 96, min(avail, 150), 12), 3), (r(x0, 116, min(avail, 220), 12), 3),
+            (r(x0, 132, avail * 0.9, 10), 3), (r(x0, 148, avail * 0.6, 10), 3),
+        ]
+
+
 class VideoCard(QFrame):
     """Thumbnail + badges/title/channel + meta for the fetched video, or a
     calm empty state while nothing is loaded."""
@@ -78,6 +99,8 @@ class VideoCard(QFrame):
         outer.addLayout(self.stack)
         self.stack.addWidget(self._build_empty())
         self.stack.addWidget(self._build_info())
+        self.skeleton = _CardSkeleton()
+        self.stack.addWidget(self.skeleton)
 
     def _build_empty(self):
         page = QWidget()
@@ -123,7 +146,9 @@ class VideoCard(QFrame):
         self.thumbnail_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lay.addWidget(self.thumbnail_label, 0, Qt.AlignmentFlag.AlignTop)
 
-        info = QVBoxLayout()
+        self.info_box = QWidget()
+        info = QVBoxLayout(self.info_box)
+        self.info_layout = info
         info.setContentsMargins(0, 0, 0, 0)
         info.setSpacing(0)
 
@@ -163,7 +188,7 @@ class VideoCard(QFrame):
         self.desc_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         info.addWidget(self.desc_label)
 
-        lay.addLayout(info, 1)
+        lay.addWidget(self.info_box, 1)
         return page
 
     # ------------------------------------------------------------------ data
@@ -223,9 +248,39 @@ class VideoCard(QFrame):
         desc = " ".join((data.get("description") or "").split())
         self.desc_label.setText(desc)
         self.desc_label.setVisible(bool(desc))
+        was_info = self.stack.currentIndex() == 1
         self.stack.setCurrentIndex(1)
+        self._reveal(was_info)
+
+    def _settle(self):
+        """Stop any running reveal and leave the content fully visible."""
+        for w in (self.info_box, self.thumbnail_label):
+            anim = getattr(w, "_anim_fade", None)
+            if anim is not None:
+                anim.stop()
+            w.setGraphicsEffect(None)
+        anim = getattr(self, "_anim_rise", None)
+        if anim is not None:
+            anim.stop()
+        self.info_layout.setContentsMargins(0, 0, 0, 0)
+
+    def _reveal(self, replacing):
+        """Fade the thumbnail and text in, the text rising a few pixels."""
+        self._settle()
+        if motion.REDUCED or not self.isVisible():
+            return
+        motion.fade_in(self.thumbnail_label, ms=motion.SLOW)
+        motion.fade_in(self.info_box, ms=motion.BASE)
+        rise = 4 if replacing else 6
+        motion.tween(
+            self, float(rise), 0.0,
+            lambda v: self.info_layout.setContentsMargins(0, round(v), 0, 0),
+            ms=motion.SLOW, curve=motion.EASE_OUT, key="_anim_rise",
+            finished=lambda: self.info_layout.setContentsMargins(0, 0, 0, 0),
+        )
 
     def clear(self):
+        self._settle()
         self._image = None
         self._loaded = False
         self._duration = ""
@@ -243,6 +298,10 @@ class VideoCard(QFrame):
         self.empty_icon.set_icon(pick_icon("search", "link"))
         self.empty_title.setText("Reading video information...")
         self.empty_sub.setText("This usually takes a few seconds.")
+        # A skeleton with a sweeping highlight reads as "working" better
+        # than static text; the text stays as the accessible description.
+        self.skeleton.setAccessibleName("Reading video information")
+        self.stack.setCurrentIndex(2)
 
     def retheme(self):
         self._render_thumb()

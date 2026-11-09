@@ -7,8 +7,9 @@ from PyQt6.QtWidgets import (
 )
 
 import theme
+from widgets import motion
 from widgets.common import ElidedLabel, Segmented, section_label
-from widgets.kit import Disclosure
+from widgets.kit import Disclosure, mix
 
 MODES = ("Video", "Audio", "Thumbnail")
 CHIP_COLUMNS = 4
@@ -27,6 +28,23 @@ class _QualityChip(QAbstractButton):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setFixedHeight(46)
         self.setMinimumWidth(0)
+        # 0..1 amounts the paint code blends palette colours with.
+        self._sel = 1.0 if self.isChecked() else 0.0
+        self._hov = 0.0
+        self.toggled.connect(self._on_toggled)
+
+    def _on_toggled(self, checked):
+        self._go("_sel", 1.0 if checked else 0.0, motion.BASE, "_anim_sel")
+
+    def _go(self, attr, end, ms, key):
+        def on_value(v, attr=attr):
+            setattr(self, attr, float(v))
+            self.update()
+        if not self.isVisible() or motion.REDUCED:
+            on_value(end)
+            return
+        motion.tween(self, getattr(self, attr), end, on_value, ms=ms,
+                     curve=motion.EASE_OUT, key=key)
 
     def sizeHint(self):
         return QSize(110, 46)
@@ -37,18 +55,20 @@ class _QualityChip(QAbstractButton):
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        on = self.isChecked() and self.isEnabled()
         if not self.isEnabled():
-            bg, border, t1, t2 = "input", "border", "text3", "text3"
-        elif on:
-            bg, border, t1, t2 = "selection", "accent_line", "text", "text2"
-        elif self.underMouse():
-            bg, border, t1, t2 = "hover", "border_strong", "text", "text2"
+            bg, border = QColor(theme.color("input")), QColor(theme.color("border"))
+            c1, c2 = QColor(theme.color("text3")), QColor(theme.color("text3"))
         else:
-            bg, border, t1, t2 = "input", "border", "text", "text3"
+            h, s = self._hov, self._sel
+            # Hover and selection are independent 0..1 amounts so both can
+            # fade in and out smoothly and overlap mid-transition.
+            bg = mix(mix("input", "hover", h), "selection", s)
+            border = mix(mix("border", "border_strong", h), "accent_line", s)
+            c1 = QColor(theme.color("text"))
+            c2 = mix("text3", "text2", max(h, s))
         rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
-        p.setBrush(QColor(theme.color(bg)))
-        p.setPen(QPen(QColor(theme.color(border)), 1))
+        p.setBrush(bg)
+        p.setPen(QPen(border, 1))
         p.drawRoundedRect(rect, 3, 3)
         inner = rect.adjusted(12, 0, -10, 0)
         f1 = QFont(self.font())
@@ -64,13 +84,13 @@ class _QualityChip(QAbstractButton):
         h1, h2 = fm1.height(), fm2.height() if self._sub else 0
         top = (rect.height() - (h1 + h2 + (1 if self._sub else 0))) / 2 + rect.top()
         p.setFont(f1)
-        p.setPen(QColor(theme.color(t1)))
+        p.setPen(c1)
         p.drawText(QRectF(inner.left(), top, inner.width(), h1),
                    int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
                    fm1.elidedText(self._title, Qt.TextElideMode.ElideRight, int(inner.width())))
         if self._sub:
             p.setFont(f2)
-            p.setPen(QColor(theme.color(t2)))
+            p.setPen(c2)
             p.drawText(QRectF(inner.left(), top + h1 + 1, inner.width(), h2),
                        int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
                        fm2.elidedText(self._sub, Qt.TextElideMode.ElideRight, int(inner.width())))
@@ -81,12 +101,16 @@ class _QualityChip(QAbstractButton):
         p.end()
 
     def enterEvent(self, event):
-        self.update()
+        self._go("_hov", 1.0, motion.FAST, "_anim_hov")
         super().enterEvent(event)
 
     def leaveEvent(self, event):
-        self.update()
+        self._go("_hov", 0.0, motion.BASE, "_anim_hov")
         super().leaveEvent(event)
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        self.update()
 
 
 class _StreamTable(QTableWidget):
@@ -259,6 +283,7 @@ class FormatSelector(QWidget):
         sel.addWidget(self.selected_label, 1)
         self.streams_body = _TableHolder(self.format_table, sel_row)
         self.streams_body.setVisible(False)
+        self._body_min = self.streams_body.minimumHeight()
         fb.addWidget(self.streams_body, 1)
 
         layout.addWidget(self.formats_box)
@@ -269,7 +294,31 @@ class FormatSelector(QWidget):
         self._rebuild_chips()
 
     def _on_streams_toggled(self, opened):
-        self.streams_body.setVisible(opened)
+        body = self.streams_body
+        if not self.isVisible() or motion.REDUCED:
+            self._finish_streams(opened)
+            return
+        start = body.height() if body.isVisible() else 0
+        end = body.sizeHint().height() if opened else 0
+        # While moving, keep the content packed at the top so the section
+        # grows by exactly the body's height; the spare-height stretch is
+        # restored when the motion ends.
+        self._root_layout.setStretch(self._tail_index - 1, 0)
+        self._root_layout.setStretch(self._tail_index, 1)
+        body.setMinimumHeight(0)  # the body's own minimum would defeat the cap
+        body.setMaximumHeight(start)
+        body.setVisible(True)
+        motion.tween(
+            self, start, end, lambda v: body.setMaximumHeight(max(0, round(v))),
+            ms=motion.BASE, curve=motion.EASE_OUT,
+            finished=lambda: self._finish_streams(opened), key="_anim_streams",
+        )
+
+    def _finish_streams(self, opened):
+        body = self.streams_body
+        body.setMinimumHeight(self._body_min)
+        body.setMaximumHeight(16777215)  # remove the cap
+        body.setVisible(opened)
         # Give the table all spare height while open, otherwise keep the
         # content packed at the top.
         self._root_layout.setStretch(self._tail_index - 1, 1 if opened else 0)
@@ -312,6 +361,7 @@ class FormatSelector(QWidget):
             chip.deleteLater()
         self._chips = []
         enabled = self.video_quality.isEnabled()
+        animate = enabled and self.chip_host.isVisible() and not motion.REDUCED
         for i, (title, sub, tip) in enumerate(self._quality_meta):
             chip = _QualityChip(title, sub)
             chip.setToolTip(tip)
@@ -319,6 +369,8 @@ class FormatSelector(QWidget):
             chip.clicked.connect(lambda _=False, idx=i: self.video_quality.setCurrentIndex(idx))
             self.chip_grid.addWidget(chip, i // CHIP_COLUMNS, i % CHIP_COLUMNS)
             self._chips.append(chip)
+            if animate:
+                motion.fade_in(chip, ms=motion.BASE)
         self._sync_chips()
 
     def _sync_chips(self, *_):
@@ -361,10 +413,47 @@ class FormatSelector(QWidget):
     def _on_mode_toggled(self, idx, checked):
         if not checked:
             return
-        self.options_stack.setCurrentIndex(idx)
-        # Quality + streams only apply to video downloads.
-        self.formats_box.setVisible(idx == 0)
+        def change():
+            self.options_stack.setCurrentIndex(idx)
+            # Quality + streams only apply to video downloads.
+            self.formats_box.setVisible(idx == 0)
+
+        self._crossfade(change, (self.options_stack, self.formats_box))
         self.mode_changed.emit(idx)
+
+    def _crossfade(self, change, incoming):
+        """Run ``change`` while a snapshot of the old look fades out over the
+        new content, which fades in underneath."""
+        if not self.isVisible() or motion.REDUCED:
+            change()
+            return
+        for old in self.findChildren(QLabel, "KsGhost"):
+            old.hide()
+            old.deleteLater()
+        ghost = QLabel(self)
+        ghost.setObjectName("KsGhost")
+        ghost.setPixmap(self.grab())
+        ghost.setGeometry(self.rect())
+        ghost.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        ghost.show()
+        old_h = self.height()
+        change()
+        for w in incoming:
+            if w.isVisible():
+                motion.fade_in(w, ms=motion.BASE)
+        ghost.raise_()
+        motion.fade_out(ghost, ms=motion.BASE, finished=ghost.deleteLater)
+        # The selector's own height changes with the mode (no quality section
+        # for Audio); glide it so whatever sits below doesn't jump.
+        new_h = self.sizeHint().height()
+        if new_h != old_h:
+            def done():
+                self.setMinimumHeight(0)
+                self.setMaximumHeight(16777215)
+            self.setFixedHeight(old_h)
+            motion.tween(self, old_h, new_h, lambda v: self.setFixedHeight(round(v)),
+                         ms=motion.BASE, curve=motion.EASE_OUT, finished=done,
+                         key="_anim_height")
 
     def get_mode(self):
         return max(0, self.mode_switch.index())
