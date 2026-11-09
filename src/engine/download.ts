@@ -329,7 +329,8 @@ async function runDirect(req: DownloadRequest, emit: Emit, signal: AbortSignal):
           container: audioFmt === "m4a" ? "m4a" : audioFmt === "opus" ? "webm" : "any",
         });
 
-  const needsConvert = audioFmt !== undefined && audioFmt !== "m4a";
+  // Audio taken from a progressive stream always goes through ffmpeg (-vn), even for m4a.
+  const needsConvert = audioFmt !== undefined && (audioFmt !== "m4a" || resolved.stream.kind === "progressive");
   const outExt = audioFmt ?? resolved.ext;
   const streaming = platform() === "android" && !needsConvert;
   const target = await makeTarget(req, safeName(info.title), outExt, streaming);

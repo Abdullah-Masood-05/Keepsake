@@ -43,7 +43,9 @@ function getFFmpeg(): Promise<FFmpeg> {
   return loading;
 }
 
-function audioArgs(format: AudioFormat, bitrate: number): string[] {
+function audioArgs(format: AudioFormat, bitrate: number, inExt: string): string[] {
+  // Opus can only be remuxed from WebM; audio from an MP4 (AAC) is re-encoded.
+  if (format === "opus" && inExt !== "webm") return ["-vn", "-c:a", "libopus", "-b:a", `${bitrate}k`];
   switch (format) {
     case "mp3":
       return ["-vn", "-c:a", "libmp3lame", "-b:a", `${bitrate}k`];
@@ -79,7 +81,7 @@ export async function convertAudio(
   ff.on("progress", onProg);
   try {
     await ff.writeFile(inName, input);
-    const code = await ff.exec(["-i", inName, ...audioArgs(format, bitrate), outName]);
+    const code = await ff.exec(["-i", inName, ...audioArgs(format, bitrate, inExt), outName]);
     if (code !== 0) throw new Error(`ffmpeg exited with code ${code}`);
     const out = await ff.readFile(outName);
     if (typeof out === "string") throw new Error("ffmpeg returned text instead of audio");

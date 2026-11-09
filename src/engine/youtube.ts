@@ -22,18 +22,32 @@
  *   `data.output` ends with `return process(n, sp, s)` (utils/Utils.js getNsigProcessorFn) and returns
  *   `{ sig, n }`. So the evaluator is `new Function(data.output)()`. This needs CSP `script-src 'unsafe-eval'`.
  * - VERIFIED utils/Utils.js: `Platform.load(shim)` replaces the shim; `Platform.shim` is getter-only.
- * INFERRED: client order ANDROID_VR -> TV -> WEB (yt-dlp's no-PO-token choices in 2025/26); not run against YouTube here.
+ * VERIFIED (bun script on the host, video 18c3MTX0PK0, 2026-11-09, Node-style fetch, not reqwest; Range bytes=0-1023 unless noted):
+ *   ANDROID_VR: status OK, plain URLs for every format (no `n`, no `pot`), but googlevideo answers 403 to every request
+ *   (with and without Origin/Referer, with and without the client's User-Agent, any Range, no Range): the URLs are bound to a
+ *   PO token that youtubei.js does not send. This was the Android 403 (info worked, the download did not).
+ *   ANDROID: status OK, only itag 18 (360p progressive) has a `url` (no content_length either); the other 26 formats have no url
+ *   or cipher. itag 18 returns 200/206 for no Range, 10 MiB Range, with or without Origin/Referer/User-Agent.
+ *   IOS: URLs present, but 403 once a Range is larger than ~0.5-1 MB (itag 139 failed at 512 KB, 140 at 4 MB): unusable for 10 MB chunks.
+ *   TV: UNPLAYABLE ("The page needs to be reloaded"). WEB: OK but no format has a url/cipher. MWEB: urls with `n`, 403 even deciphered.
+ *   So the only working no-PO-token source here is ANDROID itag 18 (progressive; no audio-only stream is available).
+ * Client order is therefore per platform: desktop keeps ANDROID_VR -> TV -> WEB for the info/quality list (its downloads use
+ * yt-dlp, so the 403 does not matter there); Android/web put ANDROID first, because they download what getBasicInfo returned.
  */
 import { Innertube, Platform } from "youtubei.js/web";
 import type { Types } from "youtubei.js/web";
 import type { StreamInfo, Thumbnail, VideoInfo } from "../lib/types";
 import { fail, friendlyError, EngineError } from "./errors";
 import { ytFetch } from "./http";
+import { isDesktop } from "./platform";
 
 type YTInfo = Awaited<ReturnType<Innertube["getBasicInfo"]>>;
 type YTFormat = NonNullable<YTInfo["streaming_data"]>["formats"][number];
 
-const CLIENTS: Types.InnerTubeClient[] = ["ANDROID_VR", "TV", "WEB"];
+/** Info only (desktop downloads use yt-dlp): ANDROID_VR lists every quality. Its stream URLs 403 without a PO token. */
+const INFO_CLIENTS: Types.InnerTubeClient[] = ["ANDROID_VR", "TV", "WEB"];
+/** Android/web download these URLs directly: ANDROID's itag 18 is the one stream that works without a PO token. */
+const DOWNLOAD_CLIENTS: Types.InnerTubeClient[] = ["ANDROID", "ANDROID_VR", "TV", "WEB"];
 
 let clientPromise: Promise<Innertube> | undefined;
 let evalInstalled = false;
@@ -129,7 +143,7 @@ function usableFormats(info: YTInfo): YTFormat[] {
 
 async function getBasicInfoAnyClient(yt: Innertube, videoId: string): Promise<YTInfo> {
   let lastReason = "";
-  for (const client of CLIENTS) {
+  for (const client of isDesktop() ? INFO_CLIENTS : DOWNLOAD_CLIENTS) {
     try {
       const info = await yt.getBasicInfo(videoId, { client });
       const status = info.playability_status?.status;
@@ -228,7 +242,8 @@ async function rawInfo(videoId: string): Promise<YTInfo> {
 /**
  * Pick a single-file stream (progressive with audio, or audio-only) and return a playable, deciphered URL.
  * - kind "progressive": best progressive at or below `maxHeight` (MP4 preferred).
- * - kind "audio": `container` "m4a" (AAC, itag 140 family) or "webm" (Opus), highest bitrate.
+ * - kind "audio": `container` "m4a" (AAC, itag 140 family) or "webm" (Opus), highest bitrate; falls back to the best
+ *   progressive when no audio-only stream exists (`stream.kind` is then "progressive" and the caller must extract the audio).
  */
 export async function resolveSingleFile(
   videoId: string,
@@ -256,7 +271,10 @@ export async function resolveSingleFile(
         return want.container === "m4a" ? c === "mp4" : c === "webm";
       })
       .sort((a, b) => b.bitrate - a.bitrate);
-    pick = audio[0];
+    // ANDROID serves no audio-only stream (see header): take the audio from the best progressive instead.
+    pick =
+      audio[0] ??
+      formats.filter((f) => f.has_video && f.has_audio).sort((a, b) => (b.height ?? 0) - (a.height ?? 0) || b.bitrate - a.bitrate)[0];
   }
   if (!pick) fail("format_unavailable");
   const yt = await getClient();
