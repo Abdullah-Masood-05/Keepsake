@@ -1,0 +1,33 @@
+{
+  "_comment": [
+    "Pinned sidecar downloads for scripts/fetch-binaries.ps1 (Windows) and scripts/fetch-binaries.sh (Linux).",
+    "sha256 is the hash of the downloaded file (the .exe/binary for yt-dlp, the archive for ffmpeg).",
+    "If sha256 is set and the download does not match, the script fails. If sha256 is empty, the script prints the computed hash and continues.",
+    "yt-dlp hashes are pinned from the release's SHA2-256SUMS file.",
+    "ffmpeg is NOT pinned: the BtbN 'latest' URLs change with every daily build. TODO: pin the hash after the first CI run prints it.",
+    "Better: replace 'latest' with a dated BtbN tag (autobuild-YYYY-MM-DD-HH-MM) before pinning, otherwise a pinned hash breaks on the next BtbN build."
+  ],
+  "yt-dlp": {
+    "version": "2026.08.19",
+    "windows": {
+      "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp.exe",
+      "sha256": "66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a"
+    },
+    "linux": {
+      "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp_linux",
+      "sha256": "58162f9bfdc27458ea47bfcb311cf47028f17d8154a8bf7d689861d46399230a"
+    }
+  },
+  "ffmpeg": {
+    "version": "BtbN master-latest (lgpl), NOT PINNED",
+    "pinned": false,
+    "windows": {
+      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl.zip",
+      "sha256": ""
+    },
+    "linux": {
+      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-lgpl.tar.xz",
+      "sha256": ""
+    }
+  }
+}

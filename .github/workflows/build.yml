@@ -1,0 +1,210 @@
+# Builds Keepsake for Windows (nsis, msi), Linux (deb, rpm, AppImage) and Android (debug APK)
+# and uploads each as a workflow artifact. See README.md for build instructions.
+# Assumes the repository root is the `fetchly` folder. If fetchly is a subfolder of the
+# repo, move this file to <repo>/.github/workflows/ and set KEEPSAKE_DIR: fetchly.
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  KEEPSAKE_DIR: .
+  BUN_VERSION: "1.4.4" # same as the local dev machine
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: ${{ env.KEEPSAKE_DIR }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      # Sidecar names must match the host triple Tauri sees.
+      - name: Use the MSVC toolchain
+        run: |
+          rustup default stable-x86_64-pc-windows-msvc
+          $hostTriple = (rustc -vV | Select-String '^host: ').ToString().Substring(6).Trim()
+          Write-Host "rustc host: $hostTriple"
+          if ($hostTriple -ne 'x86_64-pc-windows-msvc') { throw "expected msvc host, got $hostTriple" }
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ env.KEEPSAKE_DIR }}/src-tauri -> target
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Fetch sidecars (yt-dlp, ffmpeg, ffprobe)
+        run: ./scripts/fetch-binaries.ps1 -Triple x86_64-pc-windows-msvc
+
+      - run: bun install --frozen-lockfile
+
+      - name: Build installers (nsis, msi)
+        run: bun run build:windows
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: keepsake-windows-nsis
+          path: ${{ env.KEEPSAKE_DIR }}/src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: keepsake-windows-msi
+          path: ${{ env.KEEPSAKE_DIR }}/src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: error
+
+  linux:
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ env.KEEPSAKE_DIR }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux system packages (Tauri v2 prerequisites)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf xz-utils
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ env.KEEPSAKE_DIR }}/src-tauri -> target
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Fetch sidecars (yt-dlp, ffmpeg, ffprobe)
+        run: bash scripts/fetch-binaries.sh x86_64-unknown-linux-gnu
+
+      - run: bun install --frozen-lockfile
+
+      - name: Build packages (deb, rpm, AppImage)
+        run: bun run build:linux
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: keepsake-linux-deb
+          path: ${{ env.KEEPSAKE_DIR }}/src-tauri/target/release/bundle/deb/*.deb
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: keepsake-linux-rpm
+          path: ${{ env.KEEPSAKE_DIR }}/src-tauri/target/release/bundle/rpm/*.rpm
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: keepsake-linux-appimage
+          path: ${{ env.KEEPSAKE_DIR }}/src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
+
+  # No fetch-binaries here: tauri.android.conf.json sets "externalBin": [] (no sidecars).
+  android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ env.KEEPSAKE_DIR }}
+    env:
+      NDK_VERSION: "27.2.12479018"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # We do not use android-actions/setup-android: its startup runs `sdkmanager tools`, which
+      # fails on current SDK package indexes ("Failed to find package 'tools'"). The runner image
+      # already ships the Android SDK, so install the packages we need straight into it.
+      - name: Install Android platform, build tools and NDK
+        run: |
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SDKMANAGER="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then SDKMANAGER="$(command -v sdkmanager)"; fi
+          echo "Using $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          # The preinstalled cmdline-tools is too old to see new platforms. Update it first.
+          "$SDKMANAGER" --install "cmdline-tools;latest" || true
+          SDKMANAGER="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          # API 37+ packages use a minor version (android-37.0). Must match the generated Gradle
+          # project: Tauri CLI 2.12 writes compileSdk = 37 / targetSdk = 37.
+          "$SDKMANAGER" --install "platform-tools" "build-tools;37.0.0" "platforms;android-37.0" "ndk;$NDK_VERSION"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "NDK_HOME=$SDK/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$SDK/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Android targets
+        run: rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ env.KEEPSAKE_DIR }}/src-tauri -> target
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - run: bun install --frozen-lockfile
+
+      # src-tauri/gen is git-ignored, so the Android project is generated on every run.
+      - name: tauri android init
+        run: bun run android:init --ci
+
+      # build:android is `tauri android build --apk`; --debug makes it a debug-signed APK
+      # that installs directly on a phone. Release signing: see README.md (Build from source).
+      - name: Build debug APK
+        run: bun run build:android --debug --ci
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: keepsake-android-apk
+          path: ${{ env.KEEPSAKE_DIR }}/src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+
+  # Runs only for version tags (git tag v2.1.0 && git push origin v2.1.0). Collects every
+  # platform artifact into a DRAFT GitHub Release, so you review it before publishing.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, linux, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: keepsake-*
+          path: release-files
+          merge-multiple: true
+
+      - name: List release files
+        run: ls -la release-files
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          # Tags with a suffix (v2.1.0-rc.1) are marked pre-release; plain tags (v2.1.0) are production.
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true
+          files: release-files/*
