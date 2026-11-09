@@ -16,6 +16,9 @@ from widgets.common import icon_button
 NAV_ITEMS = [("Home", "home"), ("Downloads", "downloads"),
              ("History", "history"), ("Settings", "settings")]
 ICON_PX = 18
+LOGO_PX = 32
+# Left edge shared by the logo and the nav icons (3px indicator + 13px pad).
+BRAND_INSET = 16
 
 
 class NavButton(QPushButton):
@@ -93,38 +96,43 @@ class Sidebar(QFrame):
         lay.setSpacing(0)
 
         # --- brand ---
+        # Logo and a tight two-line name/version block, vertically centred
+        # and left-aligned with the nav icons below (both start at 16px).
         brand = QFrame()
         brand.setObjectName("SidebarBrand")
-        brand.setFixedHeight(64)
+        brand.setFixedHeight(68)
         bl = QHBoxLayout(brand)
-        bl.setContentsMargins(16, 0, 16, 0)
-        bl.setSpacing(10)
+        bl.setContentsMargins(BRAND_INSET, 0, 16, 0)
+        bl.setSpacing(12)
         logo = QLabel()
+        logo.setObjectName("BrandLogo")
         pm = QPixmap(app_paths.resource_path("resources", "icons", "app.png"))
         if not pm.isNull():
             dpr = self.devicePixelRatioF() or 1.0
-            pm = pm.scaled(int(28 * dpr), int(28 * dpr),
+            pm = pm.scaled(int(LOGO_PX * dpr), int(LOGO_PX * dpr),
                            Qt.AspectRatioMode.KeepAspectRatio,
                            Qt.TransformationMode.SmoothTransformation)
             pm.setDevicePixelRatio(dpr)
             logo.setPixmap(pm)
-        logo.setFixedSize(28, 28)
-        bl.addWidget(logo)
+        logo.setFixedSize(LOGO_PX, LOGO_PX)
+        bl.addWidget(logo, 0, Qt.AlignmentFlag.AlignVCenter)
         col = QVBoxLayout()
-        col.setSpacing(0)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(1)
         name = QLabel(app_name)
-        name.setObjectName("AppName")
-        ver = QLabel(f"v{version}")
-        ver.setObjectName("Version")
+        name.setObjectName("BrandName")
+        ver = QLabel(f"Version {version}")
+        ver.setObjectName("BrandVersion")
         col.addWidget(name)
         col.addWidget(ver)
         bl.addLayout(col)
+        bl.setAlignment(col, Qt.AlignmentFlag.AlignVCenter)
         bl.addStretch(1)
         lay.addWidget(brand)
 
         # --- nav ---
         nav = QVBoxLayout()
-        nav.setContentsMargins(0, 12, 0, 0)
+        nav.setContentsMargins(0, 10, 0, 0)
         nav.setSpacing(2)
         self.group = QButtonGroup(self)
         self.group.setExclusive(True)
@@ -233,6 +241,24 @@ def _qss(p):
 #SidebarBrand, #SidebarFoot {{
     background: transparent;
     border: none;
+}}
+#SidebarBrand {{
+    border-bottom: 1px solid {p['border']};
+}}
+QLabel#BrandLogo {{
+    background: transparent;
+}}
+QLabel#BrandName {{
+    background: transparent;
+    color: {p['text']};
+    font-size: 15px;
+    font-weight: 700;
+}}
+QLabel#BrandVersion {{
+    background: transparent;
+    color: {p['text3']};
+    font-size: 11px;
+    font-weight: 500;
 }}
 #SidebarFoot {{
     border-top: 1px solid {p['border']};
