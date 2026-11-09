@@ -161,6 +161,22 @@ _SVG = {
 }
 
 
+# Extra QSS builders and icons registered by other modules (pages/widgets),
+# so each can keep its own styles next to its code.
+_EXTRA_QSS = []
+
+
+def register_qss(builder):
+    """builder(p) -> QSS string, appended to the global stylesheet."""
+    if builder not in _EXTRA_QSS:
+        _EXTRA_QSS.append(builder)
+
+
+def register_icons(icons):
+    """Add {name: svg_body} icons; bodies use {c} for the colour."""
+    _SVG.update(icons)
+
+
 def _svg_bytes(name, col):
     body = _SVG[name].format(c=col)
     return ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
@@ -866,7 +882,7 @@ QMessageBox QLabel {{
 QMessageBox QPushButton {{
     min-width: 72px;
 }}
-"""
+""" + "".join(b(p) for b in _EXTRA_QSS)
 
 
 def build_palette(p):
