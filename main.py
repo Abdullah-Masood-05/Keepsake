@@ -29,7 +29,7 @@ from pages.common import PageTransition, SnapshotOverlay
 from widgets import motion
 
 APP_TITLE = "Keepsake"
-VERSION = "2.1.1"
+VERSION = "2.2.0"
 
 PAGE_HOME, PAGE_DOWNLOADS, PAGE_HISTORY, PAGE_SETTINGS = range(4)
 APP_USER_MODEL_ID = "AbdullahMasood.Keepsake"

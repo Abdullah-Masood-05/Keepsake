@@ -1,6 +1,6 @@
 [project]
 name = "keepsake"
-version = "2.1.1"
+version = "2.2.0"
 description = "Desktop video and audio downloader for YouTube and 1,800+ other sites, built on yt-dlp and PyQt6"
 readme = "Readme.md"
 authors = [
