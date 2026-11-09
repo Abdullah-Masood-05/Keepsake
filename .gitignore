@@ -1,30 +1,7 @@
-# Python / uv
-__pycache__/
-*.py[cod]
-.venv/
-.venv-*/
-venv/
-
-# Build outputs
-build_dist/
-installer_output/
-*.build/
-*.dist/
-*.onefile-build/
-nuitka-crash-report.xml
-
-# Binaries built separately (ffmpeg-ytdl-minimal-build)
-ffmpeg/
-
-# Local data / downloads
-*.log
-*.mp4
-*.mkv
-*.webm
-*.mp3
-*.m4a
-downloader_config.json
-
-# Claude Code local settings
-.claude/settings.local.json
-.claude/worktrees/
+node_modules
+dist
+src-tauri/target
+src-tauri/gen
+src-tauri/binaries/*
+!src-tauri/binaries/.gitkeep
+.keepsake-tmp
