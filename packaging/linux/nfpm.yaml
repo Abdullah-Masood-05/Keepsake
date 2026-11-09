@@ -1,10 +1,10 @@
 # nfpm config for the .deb, .rpm and Arch .pkg.tar.zst packages.
 #
 # Run from the repository root after packaging/linux/build.sh, e.g.:
-#   VERSION=2.1.0 nfpm pkg -f packaging/linux/nfpm.yaml -p deb -t dist/
+#   VERSION=2.1.1 nfpm pkg -f packaging/linux/nfpm.yaml -p deb -t dist/
 #
 # All three formats ship the same files. Only the dependency names differ.
-name: fetchly
+name: satchel
 arch: amd64
 platform: linux
 version: ${VERSION}
@@ -14,12 +14,14 @@ section: video
 priority: optional
 maintainer: Abdullah Masood <Abdullah-Masood-05@users.noreply.github.com>
 vendor: Abdullah Masood
-homepage: https://github.com/Abdullah-Masood-05/YT-VideoDowloader
+homepage: https://github.com/Abdullah-Masood-05/Satchel
 license: GPL-3.0-only
-# Formerly packaged as youtube-video-downloader; upgrade over it cleanly.
+# Formerly packaged as fetchly and youtube-video-downloader; upgrade cleanly.
 replaces:
+  - fetchly
   - youtube-video-downloader
 conflicts:
+  - fetchly
   - youtube-video-downloader
 description: |-
   Desktop video and audio downloader for YouTube and 1,000+ other sites.
@@ -31,41 +33,41 @@ description: |-
 contents:
   # Nuitka standalone folder, including the bundled static ffmpeg/ffprobe.
   - src: build/linux/dist
-    dst: /opt/fetchly
+    dst: /opt/satchel
     type: tree
-  - src: /opt/fetchly/fetchly
-    dst: /usr/bin/fetchly
+  - src: /opt/satchel/satchel
+    dst: /usr/bin/satchel
     type: symlink
 
-  - src: packaging/linux/fetchly.desktop
-    dst: /usr/share/applications/fetchly.desktop
+  - src: packaging/linux/satchel.desktop
+    dst: /usr/share/applications/satchel.desktop
     file_info: {mode: 0644}
 
-  - src: build/linux/icons/48x48/apps/fetchly.png
-    dst: /usr/share/icons/hicolor/48x48/apps/fetchly.png
+  - src: build/linux/icons/48x48/apps/satchel.png
+    dst: /usr/share/icons/hicolor/48x48/apps/satchel.png
     file_info: {mode: 0644}
-  - src: build/linux/icons/64x64/apps/fetchly.png
-    dst: /usr/share/icons/hicolor/64x64/apps/fetchly.png
+  - src: build/linux/icons/64x64/apps/satchel.png
+    dst: /usr/share/icons/hicolor/64x64/apps/satchel.png
     file_info: {mode: 0644}
-  - src: build/linux/icons/128x128/apps/fetchly.png
-    dst: /usr/share/icons/hicolor/128x128/apps/fetchly.png
+  - src: build/linux/icons/128x128/apps/satchel.png
+    dst: /usr/share/icons/hicolor/128x128/apps/satchel.png
     file_info: {mode: 0644}
-  - src: build/linux/icons/256x256/apps/fetchly.png
-    dst: /usr/share/icons/hicolor/256x256/apps/fetchly.png
+  - src: build/linux/icons/256x256/apps/satchel.png
+    dst: /usr/share/icons/hicolor/256x256/apps/satchel.png
     file_info: {mode: 0644}
-  - src: build/linux/icons/512x512/apps/fetchly.png
-    dst: /usr/share/icons/hicolor/512x512/apps/fetchly.png
+  - src: build/linux/icons/512x512/apps/satchel.png
+    dst: /usr/share/icons/hicolor/512x512/apps/satchel.png
     file_info: {mode: 0644}
 
   - src: LICENSE
-    dst: /usr/share/licenses/fetchly/LICENSE
+    dst: /usr/share/licenses/satchel/LICENSE
     file_info: {mode: 0644}
   - src: THIRD_PARTY_NOTICES.md
-    dst: /usr/share/licenses/fetchly/THIRD_PARTY_NOTICES.md
+    dst: /usr/share/licenses/satchel/THIRD_PARTY_NOTICES.md
     file_info: {mode: 0644}
   # Debian policy wants the licence under /usr/share/doc/<package>/copyright.
   - src: LICENSE
-    dst: /usr/share/doc/fetchly/copyright
+    dst: /usr/share/doc/satchel/copyright
     file_info: {mode: 0644}
     packager: deb
 

@@ -13,9 +13,9 @@ import sys
 import shutil
 from pathlib import Path
 
-APP_DIR_NAME = "Fetchly"
-# Settings folder used before the app was renamed; migrated once.
-_OLD_APP_DIR_NAME = "YouTubeVideoDownloader"
+APP_DIR_NAME = "Satchel"
+# Settings folders of earlier names, newest first; migrated once.
+_OLD_APP_DIR_NAMES = ("Fetchly", "YouTubeVideoDownloader")
 
 # Directory containing this source file (or the onefile extraction dir).
 BUNDLE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -48,7 +48,7 @@ def resource_path(*parts):
 
 
 def user_data_dir():
-    """Per-user writable directory, e.g. %APPDATA%\\Fetchly.
+    """Per-user writable directory, e.g. %APPDATA%\\Satchel.
 
     YTDL_CONFIG_DIR overrides it, so test runs don't touch the real settings.
     """
@@ -61,12 +61,15 @@ def user_data_dir():
     else:
         base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(Path.home(), ".config")
     path = os.path.join(base, APP_DIR_NAME)
-    old = os.path.join(base, _OLD_APP_DIR_NAME)
-    if not os.path.exists(path) and os.path.isdir(old):
-        try:
-            shutil.copytree(old, path)
-        except OSError:
-            pass
+    if not os.path.exists(path):
+        for name in _OLD_APP_DIR_NAMES:
+            old = os.path.join(base, name)
+            if os.path.isdir(old):
+                try:
+                    shutil.copytree(old, path)
+                except OSError:
+                    pass
+                break
     try:
         os.makedirs(path, exist_ok=True)
     except OSError:

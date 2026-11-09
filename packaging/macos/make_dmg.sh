@@ -5,7 +5,7 @@ set -euo pipefail
 
 APP="${1:?usage: make_dmg.sh <App.app> <output.dmg>}"
 DMG="${2:?usage: make_dmg.sh <App.app> <output.dmg>}"
-VOLNAME="Fetchly"
+VOLNAME="Satchel"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 STAGING="$(mktemp -d)/dmg"

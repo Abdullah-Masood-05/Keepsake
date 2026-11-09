@@ -1,14 +1,14 @@
 ; =====================================================================
-;  Inno Setup Script - Fetchly
+;  Inno Setup Script - Satchel
 ;  Packages the Nuitka single-file exe + ffmpeg into a Windows installer.
 ;  Build with: "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
 ; =====================================================================
 
-#define MyAppName "Fetchly"
-#define MyAppVersion "2.1.0"
+#define MyAppName "Satchel"
+#define MyAppVersion "2.1.1"
 #define MyAppPublisher "Abdullah Masood"
-#define MyAppURL "https://github.com/Abdullah-Masood-05/YT-VideoDowloader"
-#define MyAppExeName "Fetchly.exe"
+#define MyAppURL "https://github.com/Abdullah-Masood-05/Satchel"
+#define MyAppExeName "Satchel.exe"
 #define MySourceDir "build_dist"
 #define MyFFmpegDir "ffmpeg"
 
@@ -22,7 +22,7 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
-VersionInfoVersion=2.1.0.0
+VersionInfoVersion=2.1.1.0
 VersionInfoProductName={#MyAppName}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
@@ -36,7 +36,7 @@ PrivilegesRequiredOverridesAllowed=dialog
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=installer_output
-OutputBaseFilename=Fetchly-Setup-{#MyAppVersion}
+OutputBaseFilename=Satchel-Setup-{#MyAppVersion}
 SetupIconFile=resources\icons\app.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 UninstallDisplayName={#MyAppName}
@@ -60,8 +60,11 @@ Source: "{#MyFFmpegDir}\ffmpeg.exe"; DestDir: "{app}"; Flags: ignoreversion skip
 Source: "{#MyFFmpegDir}\ffprobe.exe"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
 [InstallDelete]
-; Leftovers from before the app was renamed from "YouTube Video Downloader"
-; (same AppId, so upgrades land in the old install folder).
+; Leftovers from earlier names ("YouTube Video Downloader", then "Fetchly").
+; Same AppId, so upgrades land in the old install folder.
+Type: files; Name: "{app}\Fetchly.exe"
+Type: filesandordirs; Name: "{autoprograms}\Fetchly"
+Type: files; Name: "{autodesktop}\Fetchly.lnk"
 Type: files; Name: "{app}\YouTubeVideoDownloader.exe"
 Type: filesandordirs; Name: "{autoprograms}\YouTube Video Downloader"
 Type: files; Name: "{autoprograms}\YouTube Video Downloader.lnk"

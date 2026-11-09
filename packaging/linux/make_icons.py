@@ -1,7 +1,7 @@
 """Render the hicolor theme icons for the Linux packages.
 
 Usage: python make_icons.py <source.png> <output-dir>
-Writes <output-dir>/<N>x<N>/apps/fetchly.png for each size.
+Writes <output-dir>/<N>x<N>/apps/satchel.png for each size.
 """
 
 import sys
@@ -10,7 +10,7 @@ from pathlib import Path
 from PIL import Image
 
 SIZES = (48, 64, 128, 256, 512)
-NAME = "fetchly.png"
+NAME = "satchel.png"
 
 
 def main():

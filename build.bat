@@ -1,7 +1,7 @@
 @echo off
 REM ============================================================
 REM  build.bat - Master build: Nuitka compile + Inno Setup
-REM  Produces: installer_output\Fetchly-Setup-2.1.0.exe
+REM  Produces: installer_output\Satchel-Setup-2.1.1.exe
 REM ============================================================
 
 setlocal enabledelayedexpansion
@@ -10,16 +10,16 @@ REM Always run from the folder containing this script.
 cd /d "%~dp0"
 
 echo ============================================
-echo  Fetchly - Build Pipeline
-echo  Version 2.1.0
+echo  Satchel - Build Pipeline
+echo  Version 2.1.1
 echo ============================================
 echo.
 
 REM --- Configuration ---
 set PYTHON=.venv\Scripts\python.exe
 set SCRIPT=main.py
-set EXE_NAME=Fetchly
-set APP_VERSION=2.1.0.0
+set EXE_NAME=Satchel
+set APP_VERSION=2.1.1.0
 set JOBS=%NUMBER_OF_PROCESSORS%
 set FFMPEG_DIR=ffmpeg
 
@@ -95,8 +95,8 @@ REM  Data files are found at runtime relative to the main module's __file__.
     --include-data-files=resources\icons\app.png=resources\icons\app.png ^
     --windows-icon-from-ico=resources\icons\app.ico ^
     --company-name="Abdullah Masood" ^
-    --product-name="Fetchly" ^
-    --file-description="Fetchly" ^
+    --product-name="Satchel" ^
+    --file-description="Satchel" ^
     --file-version=%APP_VERSION% ^
     --product-version=%APP_VERSION% ^
     --copyright="Copyright (c) 2026 Abdullah Masood" ^
@@ -175,7 +175,7 @@ echo.
 echo ============================================
 echo  BUILD COMPLETE!
 echo.
-echo  Installer: installer_output\Fetchly-Setup-2.1.0.exe
+echo  Installer: installer_output\Satchel-Setup-2.1.1.exe
 echo  Standalone: build_dist\%EXE_NAME%.exe
 if "%HAVE_FFMPEG%"=="0" echo  NOTE: built WITHOUT ffmpeg.
 echo ============================================

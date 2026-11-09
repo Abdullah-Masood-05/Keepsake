@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build "Fetchly.app" with PyInstaller (onedir .app bundle),
+# Build "Satchel.app" with PyInstaller (onedir .app bundle),
 # bundle ffmpeg/ffprobe next to the main binary and ad-hoc sign the bundle.
 #
 # Nuitka is not used on macOS: it does not support PyQt6 there (the resulting
@@ -8,13 +8,13 @@
 # Run from the repository root after `uv sync --locked` and
 # `uv pip install pyinstaller` (PyInstaller is intentionally not a project dep):
 #   packaging/macos/build_app.sh <version> [ffmpeg-dir]
-# Output: build_macos/Fetchly.app
+# Output: build_macos/Satchel.app
 set -euo pipefail
 
 VERSION="${1:?usage: build_app.sh <version> [ffmpeg-dir]}"
 FFMPEG_DIR="${2:-ffmpeg}"
-APP_NAME="Fetchly"
-BUNDLE_ID="com.abdullahmasood.fetchly"
+APP_NAME="Satchel"
+BUNDLE_ID="com.abdullahmasood.satchel"
 OUT="build_macos"
 ICNS="$OUT/app.icns"
 PYTHON="${PYTHON:-.venv/bin/python}"

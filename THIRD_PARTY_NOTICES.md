@@ -1,6 +1,6 @@
 # Third-party notices
 
-Fetchly is licensed under the GNU General Public License v3.0 (see `LICENSE`).
+Satchel is licensed under the GNU General Public License v3.0 (see `LICENSE`).
 It uses or ships the following components.
 
 | Component | License | Source |
