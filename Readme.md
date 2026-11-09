@@ -7,14 +7,14 @@
 Keepsake (formerly *Fetchly* and *YouTube Video Downloader*) is a desktop app for Windows, Linux and macOS for downloading videos, audio and thumbnails from YouTube and
 1,000+ other sites supported by [yt-dlp](https://github.com/yt-dlp/yt-dlp) (Vimeo, SoundCloud,
 Dailymotion, Bandcamp, Twitch, X, Reddit, TikTok, Instagram, archive.org and more), built on yt-dlp and PyQt6.
-The footer has a **Supported sites** link that opens a searchable list.
+**Settings** has a **Supported sites** button that opens a searchable list.
 
 ![Dark theme](docs/screenshots/dark.png)
 
 ## Features
 
 - Works with YouTube and 1,000+ other sites, not just YouTube
-- **Cookies** option in the footer (Firefox, Chrome, Edge, Brave, Opera, Vivaldi, Chromium, plus Safari on macOS) to
+- **Cookies** option in Settings (Firefox, Chrome, Edge, Brave, Opera, Vivaldi, Chromium, plus Safari on macOS) to
   download login-only or age-restricted content with your browser's session. On Windows, Firefox is recommended
   because Chrome-based browsers encrypt their cookies in a way that blocks access.
 - Quality list built from what each video actually offers (no fake 4K options)
@@ -22,6 +22,7 @@ The footer has a **Supported sites** link that opens a searchable list.
 - Embedded cover art and metadata
 - Parallel downloads with progress, speed and ETA; download history
 - Saves to your Downloads folder by default
+- Sidebar layout with Home, Downloads, History and Settings pages, smooth animations and notifications
 - Dark theme by default, with a light theme switch
 
 ![Light theme](docs/screenshots/light.png)
