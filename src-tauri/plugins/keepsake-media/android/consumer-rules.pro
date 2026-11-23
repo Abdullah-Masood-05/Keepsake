@@ -1,0 +1,14 @@
+# Tauri loads the plugin class by name over JNI and calls @Command methods by reflection.
+-keep class app.keepsake.media.KeepsakeMediaPlugin { *; }
+-keep class app.keepsake.media.TranscodeArgs { *; }
+-keep class app.keepsake.media.OpenArgs { *; }
+-keep class app.keepsake.media.YtdlpInfoArgs { *; }
+-keep class app.keepsake.media.YtdlpDownloadArgs { *; }
+-keep class app.keepsake.media.YtdlpCancelArgs { *; }
+-keep class app.keepsake.media.YtdlpMuxArgs { *; }
+-keep class app.keepsake.media.YtdlpError { *; }
+-keep class app.keepsake.media.KeepsakeYtdlp { *; }
+-keep class app.keepsake.media.EditorProbeArgs { *; }
+-keep class app.keepsake.media.EditorCropArgs { *; }
+-keep class app.keepsake.media.EditorExportArgs { *; }
+-keep class com.chaquo.python.** { *; }

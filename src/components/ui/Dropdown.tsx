@@ -12,6 +12,11 @@ export interface DropdownOption<T extends string> {
 }
 
 const ROW = 36;
+/** Phone rows grow to the 44px touch minimum (`.touch-row` in theme.css). */
+const ROW_PHONE = 44;
+const PHONE_QUERY = "(max-width: 759.98px), (pointer: coarse)";
+const GAP = 6;
+const EDGE = 8;
 
 /**
  * Custom select. The trigger is a combobox button; the list is a floating panel in
@@ -45,7 +50,9 @@ export function Select<T extends string>({
   const panel = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
-  const [pos, setPos] = useState<{ top: number; left: number; width: number; up: boolean } | null>(null);
+  const [pos, setPos] = useState<{ top: number; left: number; width: number; up: boolean; maxH: number } | null>(
+    null,
+  );
   const typed = useRef({ text: "", at: 0 });
   const selectedIndex = Math.max(
     0,
@@ -54,14 +61,24 @@ export function Select<T extends string>({
   const current = options[selectedIndex];
   const lead = icon ?? current?.icon;
 
+  // Fit the list in the visible viewport (the visual viewport shrinks when the
+  // Android keyboard is up): open below, flip up when there is more room above,
+  // and cap the height to the room on the chosen side.
   const place = useCallback(() => {
     const r = btn.current?.getBoundingClientRect();
     if (!r) return;
-    const h = Math.min(options.length * ROW + 12, 320);
-    const up = r.bottom + 6 + h > window.innerHeight - 8 && r.top - 6 - h > 8;
-    const width = Math.max(r.width, 160);
-    const left = Math.min(Math.max(8, r.left), window.innerWidth - width - 8);
-    setPos({ top: up ? r.top - 6 - h : r.bottom + 6, left, width, up });
+    const vv = window.visualViewport;
+    const vh = vv ? vv.height + vv.offsetTop : window.innerHeight;
+    const vw = vv ? vv.width + vv.offsetLeft : window.innerWidth;
+    const row = window.matchMedia(PHONE_QUERY).matches ? ROW_PHONE : ROW;
+    const want = Math.min(options.length * row + 12, 320);
+    const below = vh - r.bottom - GAP - EDGE;
+    const above = r.top - GAP - EDGE;
+    const up = want > below && above > below;
+    const maxH = Math.max(row + 12, Math.min(want, up ? above : below));
+    const width = Math.min(Math.max(r.width, 160), vw - EDGE * 2);
+    const left = Math.min(Math.max(EDGE, r.left), vw - width - EDGE);
+    setPos({ top: up ? r.top - GAP - maxH : r.bottom + GAP, left, width, up, maxH });
   }, [options.length]);
 
   const openList = () => {
@@ -86,7 +103,7 @@ export function Select<T extends string>({
 
   useEffect(() => {
     if (!open) return;
-    const onDown = (e: MouseEvent) => {
+    const onDown = (e: PointerEvent) => {
       const n = e.target as Node;
       if (btn.current?.contains(n) || panel.current?.contains(n)) return;
       setOpen(false);
@@ -96,11 +113,11 @@ export function Select<T extends string>({
       setOpen(false);
     };
     const onResize = () => setOpen(false);
-    document.addEventListener("mousedown", onDown, true);
+    document.addEventListener("pointerdown", onDown, true);
     window.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", onResize);
     return () => {
-      document.removeEventListener("mousedown", onDown, true);
+      document.removeEventListener("pointerdown", onDown, true);
       window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", onResize);
     };
@@ -166,11 +183,12 @@ export function Select<T extends string>({
             top: pos.top,
             left: pos.left,
             width: pos.width,
+            maxHeight: pos.maxH,
             transformOrigin: pos.up ? "50% 100%" : "50% 0%",
           }}
-          className="card z-[70] max-h-[320px] overflow-hidden !rounded-[16px_16px_16px_6px] p-1.5 shadow-pop"
+          className="card z-[70] flex flex-col overflow-hidden !rounded-[16px_16px_16px_6px] p-1.5 shadow-pop"
         >
-          <ul id={`${id}-list`} role="listbox" aria-label={label} className="scroll-y max-h-[308px]">
+          <ul id={`${id}-list`} role="listbox" aria-label={label} className="scroll-y min-h-0 flex-1 overscroll-contain">
             {options.map((o, i) => {
               const sel = o.value === value;
               const hi = i === active;
@@ -183,7 +201,7 @@ export function Select<T extends string>({
                   onMouseEnter={() => setActive(i)}
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => choose(i)}
-                  className={`relative flex h-9 cursor-default items-center gap-2 rounded-[10px] px-2.5 text-[12px] font-medium transition-colors duration-100 ${
+                  className={`touch-row relative flex h-9 shrink-0 cursor-default items-center gap-2 rounded-[10px] px-2.5 text-[12px] font-medium transition-colors duration-100 ${
                     sel ? "text-fg" : hi ? "text-fg" : "text-fg-2"
                   }`}
                 >
@@ -239,7 +257,7 @@ export function Select<T extends string>({
         onKeyDown={onKey}
         whileTap={disabled ? undefined : press}
         transition={t.press}
-        className={`icon-host group flex h-9 w-full items-center gap-2 rounded-[12px_12px_12px_5px] border bg-inset pr-2 pl-3 text-left text-[12px] font-medium text-fg shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] transition-[border-color,background-color,box-shadow] duration-150 hover:border-line-strong hover:bg-card-hover disabled:pointer-events-none disabled:opacity-45 ${
+        className={`hit icon-host group flex h-9 w-full items-center gap-2 rounded-[12px_12px_12px_5px] border bg-inset pr-2 pl-3 text-left text-[12px] font-medium text-fg shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] transition-[border-color,background-color,box-shadow] duration-150 hover:border-line-strong hover:bg-card-hover disabled:pointer-events-none disabled:opacity-45 ${
           open ? "border-accent-border shadow-[0_0_0_3px_var(--accent-soft)]" : "border-line"
         }`}
       >

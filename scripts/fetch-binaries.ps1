@@ -1,13 +1,13 @@
-# Downloads the yt-dlp, ffmpeg and ffprobe sidecars into src-tauri/binaries with the
-# target-triple names Tauri expects (externalBin), and checks SHA-256 against
-# scripts/binaries.lock.json.
+# Downloads the yt-dlp, ffmpeg and qjs (QuickJS-NG) sidecars into src-tauri/binaries
+# with the target-triple names Tauri expects (externalBin), and checks every download
+# against the SHA-256 pinned in scripts/binaries.lock.json.
 #
 #   powershell -ExecutionPolicy Bypass -File scripts\fetch-binaries.ps1
 #   powershell -ExecutionPolicy Bypass -File scripts\fetch-binaries.ps1 -Triple x86_64-pc-windows-gnu
 #
-# A lock entry with a sha256 must match, or the script fails. An empty sha256 prints the
-# computed hash and continues. The ffmpeg URL is BtbN "latest" and is not pinned yet:
-# copy the hash printed by the first CI run into binaries.lock.json to pin it.
+# Supported triples are listed under "triples" in the lock file. A hash mismatch fails
+# the script. An entry marked "pinned": false prints a warning with the computed hash;
+# a pinned entry with no sha256 fails.
 param(
   [string]$Triple = "x86_64-pc-windows-msvc"
 )
@@ -22,34 +22,42 @@ $bin = Join-Path $root "src-tauri\binaries"
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ("keepsake-bin-" + [Guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force $bin, $tmp | Out-Null
 
-function Get-Checked([string]$Name, $Entry, [string]$Dest) {
-  Write-Host "Downloading $Name from $($Entry.url)"
-  Invoke-WebRequest -UseBasicParsing -Uri $Entry.url -OutFile $Dest
-  $hash = (Get-FileHash -Algorithm SHA256 $Dest).Hash.ToLower()
-  $want = "$($Entry.sha256)".Trim().ToLower()
-  if ($want -eq "") {
-    Write-Host "WARNING: $Name has no pinned sha256 in binaries.lock.json. Computed sha256: $hash"
-  } elseif ($hash -ne $want) {
-    throw "SHA-256 mismatch for $Name. Expected $want, got $hash"
-  } else {
-    Write-Host "$Name sha256 OK ($hash)"
-  }
+$platform = $lock.triples.$Triple
+if (-not $platform) {
+  $known = ($lock.triples.PSObject.Properties | ForEach-Object { $_.Name }) -join ", "
+  throw "Unsupported target triple $Triple. Supported: $known"
 }
+$ext = if ($Triple -like "*windows*") { ".exe" } else { "" }
 
 try {
-  # yt-dlp
-  Get-Checked "yt-dlp" $lock.'yt-dlp'.windows (Join-Path $bin "yt-dlp-$Triple.exe")
+  foreach ($prop in $lock.sidecars.PSObject.Properties) {
+    $name = $prop.Name
+    $tool = $prop.Value
+    $entry = $tool.$platform
+    if (-not $entry) { throw "binaries.lock.json has no $name entry for $platform ($Triple)" }
 
-  # ffmpeg + ffprobe from the BtbN zip
-  $zip = Join-Path $tmp "ffmpeg.zip"
-  Get-Checked "ffmpeg archive" $lock.ffmpeg.windows $zip
-  $ext = Join-Path $tmp "x"
-  Expand-Archive -Path $zip -DestinationPath $ext -Force
-  foreach ($tool in "ffmpeg", "ffprobe") {
-    $src = Get-ChildItem -Path $ext -Recurse -File -Filter "$tool.exe" | Select-Object -First 1
-    if (-not $src) { throw "$tool.exe not found in the ffmpeg archive" }
-    Copy-Item -Force $src.FullName (Join-Path $bin "$tool-$Triple.exe")
+    $dl = Join-Path $tmp $name
+    Write-Host "Downloading $name from $($entry.url)"
+    Invoke-WebRequest -UseBasicParsing -Uri $entry.url -OutFile $dl
+    $got = (Get-FileHash -Algorithm SHA256 $dl).Hash.ToLower()
+    $want = "$($entry.sha256)".Trim().ToLower()
+    $pinned = -not ($tool.PSObject.Properties.Name -contains "pinned" -and $tool.pinned -eq $false)
+
+    if ($want -ne "") {
+      if ($got -ne $want) { throw "SHA-256 mismatch for $name. Expected $want, got $got" }
+      Write-Host "$name sha256 OK ($got)"
+    } elseif (-not $pinned) {
+      Write-Warning "$name is NOT verified (`"pinned`": false in binaries.lock.json). Computed sha256: $got"
+      Write-Warning "Pin this hash in scripts/binaries.lock.json before release."
+    } else {
+      throw "$name is marked pinned but has no sha256 in binaries.lock.json"
+    }
+
+    Move-Item -Force $dl (Join-Path $bin "$name-$Triple$ext")
   }
+
+  # ffprobe is no longer bundled; drop a stale copy from older runs.
+  Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $bin "ffprobe-$Triple$ext")
 
   Get-ChildItem $bin | Format-Table Name, Length -AutoSize
 } finally {

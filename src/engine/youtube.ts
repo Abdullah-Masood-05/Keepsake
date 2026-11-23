@@ -22,18 +22,35 @@
  *   `data.output` ends with `return process(n, sp, s)` (utils/Utils.js getNsigProcessorFn) and returns
  *   `{ sig, n }`. So the evaluator is `new Function(data.output)()`. This needs CSP `script-src 'unsafe-eval'`.
  * - VERIFIED utils/Utils.js: `Platform.load(shim)` replaces the shim; `Platform.shim` is getter-only.
- * INFERRED: client order ANDROID_VR -> TV -> WEB (yt-dlp's no-PO-token choices in 2025/26); not run against YouTube here.
+ * VERIFIED (bun script on the host, video 18c3MTX0PK0, 2026-11-09, Node-style fetch, not reqwest; Range bytes=0-1023 unless noted):
+ *   ANDROID_VR: status OK, plain URLs for every format (no `n`, no `pot`), but googlevideo answers 403 to every request
+ *   (with and without Origin/Referer, with and without the client's User-Agent, any Range, no Range): the URLs are bound to a
+ *   PO token that youtubei.js does not send. This was the Android 403 (info worked, the download did not).
+ *   ANDROID: status OK, only itag 18 (360p progressive) has a `url` (no content_length either); the other 26 formats have no url
+ *   or cipher. itag 18 returns 200/206 for no Range, 10 MiB Range, with or without Origin/Referer/User-Agent.
+ *   IOS: URLs present, but 403 once a Range is larger than ~0.5-1 MB (itag 139 failed at 512 KB, 140 at 4 MB): unusable for 10 MB chunks.
+ *   TV: UNPLAYABLE ("The page needs to be reloaded"). WEB: OK but no format has a url/cipher. MWEB: urls with `n`, 403 even deciphered.
+ *   So the only working no-PO-token source here is ANDROID itag 18 (progressive; no audio-only stream is available).
+ * Client order is therefore per platform: desktop keeps ANDROID_VR -> TV -> WEB for the info/quality list (its downloads use
+ * yt-dlp, so the 403 does not matter there); Android/web put ANDROID first, because they download what getBasicInfo returned.
  */
 import { Innertube, Platform } from "youtubei.js/web";
 import type { Types } from "youtubei.js/web";
 import type { StreamInfo, Thumbnail, VideoInfo } from "../lib/types";
 import { fail, friendlyError, EngineError } from "./errors";
 import { ytFetch } from "./http";
+import { isDesktop, platform } from "./platform";
+import { getPoToken } from "./po-token";
 
 type YTInfo = Awaited<ReturnType<Innertube["getBasicInfo"]>>;
 type YTFormat = NonNullable<YTInfo["streaming_data"]>["formats"][number];
 
-const CLIENTS: Types.InnerTubeClient[] = ["ANDROID_VR", "TV", "WEB"];
+/** Info only (desktop downloads use yt-dlp): ANDROID_VR lists every quality. Its stream URLs 403 without a PO token. */
+const INFO_CLIENTS: Types.InnerTubeClient[] = ["ANDROID_VR", "TV", "WEB"];
+/** Android/web download these URLs directly: ANDROID's itag 18 is the one stream that works without a PO token. */
+const DOWNLOAD_CLIENTS: Types.InnerTubeClient[] = ["ANDROID", "ANDROID_VR", "TV", "WEB"];
+/** With a PO token, WEB is the client the token is minted for (request key + visitor_data): it lists every quality. */
+const PO_TOKEN_CLIENTS: Types.InnerTubeClient[] = ["WEB", "ANDROID", "ANDROID_VR", "TV"];
 
 let clientPromise: Promise<Innertube> | undefined;
 let evalInstalled = false;
@@ -44,7 +61,7 @@ function installEvaluator() {
   Platform.load({
     ...shim,
     // data.output is a self-contained script ending in `return process(...)` (see header).
-    // eslint-disable-next-line no-new-func
+    // oxlint-disable-next-line no-new-func
     eval: (data: Types.BuildScriptResult) => new Function(data.output)() as Record<string, unknown>,
   });
   evalInstalled = true;
@@ -127,11 +144,34 @@ function usableFormats(info: YTInfo): YTFormat[] {
   );
 }
 
+/**
+ * Android: mint a PO token bound to this session's visitor_data. Without it every high-quality URL
+ * answers 403 (see the header) and only ANDROID itag 18 works. Null on desktop or when minting fails;
+ * callers then behave exactly as before.
+ */
+async function sessionPoToken(yt: Innertube): Promise<string | undefined> {
+  if (platform() !== "android") return undefined;
+  try {
+    const token = (await getPoToken(yt.session.context.client.visitorData ?? "")) ?? undefined;
+    if (token) {
+      // The player appends `pot=<token>` when it deciphers a stream URL (Player.decipher); the session makes
+      // later info calls attach the same token without threading it through every call.
+      yt.session.po_token = token;
+      if (yt.session.player) yt.session.player.po_token = token;
+    }
+    return token;
+  } catch {
+    return undefined;
+  }
+}
+
 async function getBasicInfoAnyClient(yt: Innertube, videoId: string): Promise<YTInfo> {
   let lastReason = "";
-  for (const client of CLIENTS) {
+  const poToken = await sessionPoToken(yt);
+  const order = isDesktop() ? INFO_CLIENTS : poToken ? PO_TOKEN_CLIENTS : DOWNLOAD_CLIENTS;
+  for (const client of order) {
     try {
-      const info = await yt.getBasicInfo(videoId, { client });
+      const info = await yt.getBasicInfo(videoId, { client, ...(poToken ? { po_token: poToken } : {}) });
       const status = info.playability_status?.status;
       if (status === "OK" && usableFormats(info).length > 0) return info;
       lastReason = info.playability_status?.reason ?? `Playability status ${status ?? "unknown"}`;
@@ -144,7 +184,7 @@ async function getBasicInfoAnyClient(yt: Innertube, videoId: string): Promise<YT
 
 function thumbs(list: { url: string; width?: number; height?: number }[] | undefined): Thumbnail[] {
   return [...(list ?? [])]
-    .sort((a, b) => (b.width ?? 0) * (b.height ?? 0) - (a.width ?? 0) * (a.height ?? 0))
+    .toSorted((a, b) => (b.width ?? 0) * (b.height ?? 0) - (a.width ?? 0) * (a.height ?? 0))
     .map((t) => ({ url: t.url, width: t.width, height: t.height }));
 }
 
@@ -184,7 +224,7 @@ export async function fetchYouTubeInfo(url: string): Promise<VideoInfo> {
   }
   const heights = Object.keys(fpsByHeight)
     .map(Number)
-    .sort((a, b2) => b2 - a);
+    .toSorted((a, b2) => b2 - a);
   const hasVideo = streams.some((s) => s.kind !== "audio-only");
   return {
     id: videoId,
@@ -228,7 +268,8 @@ async function rawInfo(videoId: string): Promise<YTInfo> {
 /**
  * Pick a single-file stream (progressive with audio, or audio-only) and return a playable, deciphered URL.
  * - kind "progressive": best progressive at or below `maxHeight` (MP4 preferred).
- * - kind "audio": `container` "m4a" (AAC, itag 140 family) or "webm" (Opus), highest bitrate.
+ * - kind "audio": `container` "m4a" (AAC, itag 140 family) or "webm" (Opus), highest bitrate; falls back to the best
+ *   progressive when no audio-only stream exists (`stream.kind` is then "progressive" and the caller must extract the audio).
  */
 export async function resolveSingleFile(
   videoId: string,
@@ -240,7 +281,7 @@ export async function resolveSingleFile(
   if (want.kind === "progressive") {
     const prog = formats
       .filter((f) => f.has_video && f.has_audio && (!want.maxHeight || (f.height ?? 0) <= want.maxHeight))
-      .sort(
+      .toSorted(
         (a, b) =>
           (b.height ?? 0) - (a.height ?? 0) ||
           Number(b.mime_type.startsWith("video/mp4")) - Number(a.mime_type.startsWith("video/mp4")) ||
@@ -255,8 +296,11 @@ export async function resolveSingleFile(
         const c = codecs(f.mime_type).container;
         return want.container === "m4a" ? c === "mp4" : c === "webm";
       })
-      .sort((a, b) => b.bitrate - a.bitrate);
-    pick = audio[0];
+      .toSorted((a, b) => b.bitrate - a.bitrate);
+    // ANDROID serves no audio-only stream (see header): take the audio from the best progressive instead.
+    pick =
+      audio[0] ??
+      formats.filter((f) => f.has_video && f.has_audio).toSorted((a, b) => (b.height ?? 0) - (a.height ?? 0) || b.bitrate - a.bitrate)[0];
   }
   if (!pick) fail("format_unavailable");
   const yt = await getClient();
@@ -264,4 +308,48 @@ export async function resolveSingleFile(
   if (!url) fail("no_formats", "Empty stream URL after decipher");
   const stream = toStream(pick);
   return { url, sizeBytes: pick.content_length, ext: stream.ext, stream };
+}
+
+/** A separately served video-only stream plus the audio-only stream to mux with it (Android). */
+export interface ResolvedPair {
+  video: ResolvedStream;
+  audio?: ResolvedStream;
+}
+
+/** Container implied by a youtubei mime type: `video/webm` -> webm, everything else -> mp4. */
+function containerOf(mime: string): "mp4" | "webm" {
+  return codecs(mime).container === "webm" ? "webm" : "mp4";
+}
+
+/**
+ * Best adaptive (video-only + audio-only) pair at or below `maxHeight`, deciphered and ready to stream.
+ * This is what unlocks 720p and above on Android: high qualities are never served as progressive files.
+ * Falls back to the best progressive single file (which also has audio) when no pair is available.
+ */
+export async function resolveAdaptive(videoId: string, maxHeight?: number): Promise<ResolvedPair> {
+  const info = await rawInfo(videoId);
+  const formats = usableFormats(info);
+  const yt = await getClient();
+
+  const videos = formats
+    .filter((f) => f.has_video && !f.has_audio && (!maxHeight || (f.height ?? 0) <= maxHeight))
+    .toSorted((a, b) => (b.height ?? 0) - (a.height ?? 0) || (b.fps ?? 0) - (a.fps ?? 0) || b.bitrate - a.bitrate);
+
+  for (const video of videos) {
+    const container = containerOf(video.mime_type);
+    const audio = formats
+      .filter((f) => f.has_audio && !f.has_video && containerOf(f.mime_type) === container)
+      .toSorted((a, b) => b.bitrate - a.bitrate)[0];
+    if (!audio) continue;
+    const videoUrl = await video.decipher(yt.session.player);
+    const audioUrl = await audio.decipher(yt.session.player);
+    if (!videoUrl || !audioUrl) continue;
+    return {
+      video: { url: videoUrl, sizeBytes: video.content_length, ext: container, stream: toStream(video) },
+      audio: { url: audioUrl, sizeBytes: audio.content_length, ext: container, stream: toStream(audio) },
+    };
+  }
+
+  // No adaptive pair (e.g. a stream that only offers progressive files): use the single-file path.
+  return { video: await resolveSingleFile(videoId, { kind: "progressive", maxHeight }) };
 }

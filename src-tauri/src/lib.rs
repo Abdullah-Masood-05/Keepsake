@@ -3,16 +3,22 @@
 #[cfg(desktop)]
 use tauri::Manager;
 
+mod editor;
 mod ytdlp;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // Android audio conversion on platform MediaCodec/MediaMuxer (replaces ffmpeg.wasm).
+    #[cfg(mobile)]
+    let builder = builder.plugin(tauri_plugin_keepsake_media::init());
+    builder
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(ytdlp::Jobs::default())
+        .manage(ytdlp::VersionCache::default())
         .setup(|app| {
             // The window starts hidden (visible: false) and the frontend calls
             // getCurrentWindow().show() after first paint. Safety net: show it
@@ -35,7 +41,12 @@ pub fn run() {
             ytdlp::run_ytdlp,
             ytdlp::cancel_ytdlp,
             ytdlp::binary_status,
-            ytdlp::list_installed_browsers
+            ytdlp::list_installed_browsers,
+            ytdlp::sweep_stale_temp,
+            // Desktop editor; each command rejects with "editor:unsupported" on Android.
+            editor::editor_probe,
+            editor::edit_video,
+            editor::cancel_edit, editor::editor_capabilities
         ])
         .build(tauri::generate_context!())
         .expect("error while building Keepsake")
@@ -43,6 +54,7 @@ pub fn run() {
             // Kill running yt-dlp trees when the app exits.
             if let tauri::RunEvent::Exit = event {
                 ytdlp::kill_all(app);
+                editor::kill_all();
             }
         });
 }

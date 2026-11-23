@@ -14,6 +14,7 @@ import { openAddLink } from "../state/nav";
 import { addSource, markSourceDownloaded, removeSource, useSources, type Source, type SourceKind } from "../state/sources";
 import { notify } from "../state/toast";
 import { useQuickDownload } from "./QuickDownload";
+import { PAGE_STACK } from "../components/layout/page";
 
 type Sort = "newest" | "name" | "recent";
 
@@ -49,11 +50,11 @@ export function SourcesPage({ phone }: { phone: boolean }) {
     return (
       <>
         <EmptyState
-          icon="sources"
+          illustration="sources"
           title="No sources yet"
           body="Add a YouTube channel, an Instagram or TikTok profile, or any playlist. Download from it any time."
           action={
-            <Button variant="primary" icon="plus" onClick={() => openAddLink("sources")}>
+            <Button variant="primary" size={phone ? "lg" : "md"} icon="plus" onClick={() => openAddLink("sources")}>
               Add a source
             </Button>
           }
@@ -64,7 +65,7 @@ export function SourcesPage({ phone }: { phone: boolean }) {
   }
 
   return (
-    <div className="flex flex-col gap-4 pb-20">
+    <div className={PAGE_STACK}>
       <div className={`flex gap-2 ${phone ? "flex-col" : "flex-wrap items-center justify-between"}`}>
         <div className={phone ? "no-scrollbar -mx-4 overflow-x-auto px-4" : ""}>
           <Segmented
@@ -77,7 +78,7 @@ export function SourcesPage({ phone }: { phone: boolean }) {
             ]}
           />
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 items-center gap-2">
           <Select<Sort>
             label="Sort sources"
             value={sort}
@@ -95,10 +96,10 @@ export function SourcesPage({ phone }: { phone: boolean }) {
         </div>
       </div>
 
-      <div className={`grid gap-3 ${phone ? "grid-cols-1" : "grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4"}`}>
+      <div className={`grid gap-3 ${phone ? "grid-cols-[minmax(0,1fr)]" : "grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4"}`}>
         <AnimatePresence initial={false}>
           {shown.map((s, i) => (
-            <motion.div key={s.id} layout={!reduced} {...listItem(reduced, i)}>
+            <motion.div key={s.id} layout={!reduced} {...listItem(reduced, i)} className="min-w-0">
               <SourceTile
                 source={s}
                 phone={phone}
@@ -155,25 +156,33 @@ function SourceTile({
             {safePath(s.url)}
           </div>
         </div>
-        <span className="text-accent">
+        <span className="shrink-0 text-accent">
           <Glyph icon={CATEGORY_ICON[category] ?? "globe"} size={15} box={30} />
         </span>
       </div>
-      <div className="flex flex-wrap items-center gap-1.5">
+      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
         <TagBadge>{KIND_LABEL[s.kind]}</TagBadge>
         <TagBadge tone="neutral">{siteLabel(s.site)}</TagBadge>
         <span className="ml-auto text-[11px] text-fg-3">
           {s.lastDownloadedAt ? `Downloaded ${relativeTime(s.lastDownloadedAt)}` : `Added ${relativeTime(s.addedAt)}`}
         </span>
       </div>
-      <div className="flex items-center gap-1.5">
-        <Button size={phone ? "md" : "sm"} variant="primary" icon="download" className="flex-1" onClick={onDownload}>
-          Download from source
+      {/* At 320px the tile body is ~256px: the label truncates instead of pushing the icons out. */}
+      <div className="flex min-w-0 items-center gap-1.5">
+        <Button
+          size={phone ? "md" : "sm"}
+          variant="primary"
+          icon="download"
+          className={`min-w-0 flex-1 ${phone ? "h-11" : ""}`}
+          title="Download from source"
+          onClick={onDownload}
+        >
+          <span className="min-w-0 truncate">Download from source</span>
         </Button>
         <IconButton
           icon={copied ? "check" : "copy"}
           label="Copy link"
-          size={phone ? 40 : 32}
+          size={phone ? 44 : 32}
           onClick={() => {
             void navigator.clipboard?.writeText(s.url).then(() => {
               setCopied(true);
@@ -181,7 +190,7 @@ function SourceTile({
             });
           }}
         />
-        <IconButton icon="trash" label="Remove source" size={phone ? 40 : 32} onClick={onRemove} />
+        <IconButton icon="trash" label="Remove source" size={phone ? 44 : 32} onClick={onRemove} />
       </div>
     </motion.article>
   );

@@ -3,7 +3,13 @@ import type { VideoInfo } from "../../lib/types";
 import { formatClock, formatCount, formatDate } from "../../state/format";
 import { Badge } from "../ui/Badge";
 import { Icon } from "../ui/Icon";
-import { Skeleton } from "../ui/Fields";
+import { CardBow } from "../ui/illustrations/CardBow";
+import { CardKindBadge } from "../ui/illustrations/CardKindBadge";
+import { CardReadyStamp } from "../ui/illustrations/CardReadyStamp";
+import "../ui/illustrations/CardSurface.css";
+import { Mascot } from "../ui/illustrations/Mascot";
+import { Scene, Sparkle } from "../ui/illustrations/Scene";
+import { Pulse } from "../ui/Loader";
 import { press, t } from "../ui/motion";
 
 function kicker(info: VideoInfo): string {
@@ -33,6 +39,7 @@ export function Thumb({
           alt=""
           draggable={false}
           loading="lazy"
+          decoding="async"
           referrerPolicy="no-referrer"
           className={`absolute inset-0 size-full ${contain ? "object-contain" : "object-cover"}`}
           onError={(e) => {
@@ -76,27 +83,68 @@ export function PreviewCard({
     <AnimatePresence mode="wait" initial={false}>
       {loading ? (
         <motion.div key="loading" {...fade} transition={t.base} className={`flex min-h-0 flex-1 gap-4 ${phone ? "flex-col" : ""}`}>
-          <Skeleton className={phone ? "aspect-video w-full" : "aspect-video h-full max-h-full shrink-0 rounded-md"} />
+          <div
+            aria-hidden="true"
+            className={`ks-shimmer motion-safe-only rounded-[var(--radius-sm)] ${
+              phone ? "aspect-video w-full" : "aspect-video h-full max-h-full shrink-0 rounded-md"
+            }`}
+          />
           <div className="flex min-w-0 flex-1 flex-col gap-3 pt-1">
             <div className="text-[11px] font-medium tracking-wider text-fg-3">FETCHING</div>
-            <div className="text-[15px] font-semibold">Reading link info...</div>
-            <Skeleton className="h-3 w-3/4" />
-            <Skeleton className="h-3 w-1/2" />
-            <Skeleton className="h-3 w-2/3" />
+            <div className="text-[15px] font-semibold">{phone ? "Looking up your link…" : "Reading link info..."}</div>
+            <Pulse lines={3} />
           </div>
         </motion.div>
       ) : info ? (
         <motion.div key={info.url} {...fade} transition={t.base} className={`flex min-h-0 flex-1 gap-4 ${phone ? "flex-col" : ""}`}>
-          <Thumb
-            src={info.thumbnails[0]?.url}
-            icon={info.hasVideo ? "video" : "audio"}
-            contain={!info.hasVideo}
-            className={`aspect-video shrink-0 rounded-md ${phone ? "w-full" : "h-full max-h-[220px] self-start"}`}
-          />
+          {phone ? (
+            // Phone: full-width hero thumb with the duration pinned on it and a "ready" stamp.
+            <div className="relative w-full shrink-0">
+              <div className="phero-frame relative overflow-hidden">
+                <Thumb
+                  src={info.thumbnails[0]?.url}
+                  icon={info.hasVideo ? "video" : "audio"}
+                  contain={!info.hasVideo}
+                  className="aspect-video w-full shrink-0"
+                />
+                <span aria-hidden="true" className="absolute bottom-2 left-2 block size-8 drop-shadow-sm">
+                  <CardKindBadge kind={info.hasVideo ? "video" : "audio"} className="size-full" />
+                </span>
+                {info.durationSec ? (
+                  <span className="tabular absolute right-2 bottom-2 rounded-md bg-black/75 px-1.5 py-0.5 text-[11px] font-semibold text-white">
+                    {formatClock(info.durationSec)}
+                  </span>
+                ) : null}
+              </div>
+              <span aria-hidden="true" className="pointer-events-none absolute -top-2.5 -left-2 block w-10">
+                <CardBow className="w-full" />
+              </span>
+              <CardReadyStamp label="Ready" className="phero-stamp absolute -top-3 -right-2 size-[68px]" />
+            </div>
+          ) : (
+            // Desktop keeps the original sizing (height-driven 16:9, capped at 220px) on the wrapper.
+            <div className="relative aspect-video h-full max-h-[220px] shrink-0 self-start">
+              <div className="phero-frame absolute inset-0 overflow-hidden">
+                <Thumb
+                  src={info.thumbnails[0]?.url}
+                  icon={info.hasVideo ? "video" : "audio"}
+                  contain={!info.hasVideo}
+                  className="size-full"
+                />
+                <span aria-hidden="true" className="absolute bottom-2 left-2 block size-8 drop-shadow-sm">
+                  <CardKindBadge kind={info.hasVideo ? "video" : "audio"} className="size-full" />
+                </span>
+              </div>
+              <span aria-hidden="true" className="pointer-events-none absolute -top-2.5 -left-2 block w-10">
+                <CardBow className="w-full" />
+              </span>
+              <CardReadyStamp label="Ready" className="phero-stamp absolute -top-4 -right-4 size-[64px]" />
+            </div>
+          )}
           <div className="flex min-w-0 flex-1 flex-col gap-2">
             <div className="truncate text-[11px] font-medium tracking-wider text-accent">{kicker(info)}</div>
             <h3
-              className="selectable line-clamp-2 min-w-0 text-[15px] leading-[22px] font-semibold [overflow-wrap:anywhere]"
+              className={`selectable line-clamp-2 min-w-0 font-semibold [overflow-wrap:anywhere] ${phone ? "text-[17px] leading-6" : "text-[15px] leading-[22px]"}`}
               title={info.title}
             >
               {info.title.length > 140 ? `${info.title.slice(0, 139)}…` : info.title}
@@ -140,9 +188,13 @@ export function PreviewCard({
           transition={t.base}
           className="flex flex-1 flex-col items-center justify-center gap-2 text-center"
         >
-          <span className="breathe icon-host flex size-12 items-center justify-center rounded-full bg-accent-soft text-accent">
-            <Icon name="link" size={22} animated />
-          </span>
+          <div className="w-28 shrink-0">
+            <Scene>
+              <Mascot x={120} y={150} scale={1.25} mood="curious" pose="wave" lid="tip" />
+              <Sparkle x={70} y={60} size={7} />
+              <Sparkle x={176} y={48} size={5} delay={0.9} />
+            </Scene>
+          </div>
           <div className="text-[11px] font-medium tracking-wider text-fg-3">NO VIDEO</div>
           <div className="text-[15px] font-semibold">Paste a link to get started</div>
           <div className="text-fg-2">YouTube and 1,000+ other sites. Press Enter or Fetch.</div>

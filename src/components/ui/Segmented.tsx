@@ -17,7 +17,7 @@ export interface SegmentedOption<T extends string> {
  * Pill tab bar. The active thumb is a raised pill with a notch bitten out of its
  * lower edge (CSS mask, `.notch-thumb`) and an accent bead seated in the notch;
  * thumb and bead spring together between options (shared layoutId).
- * Arrow keys move the selection like a radio group.
+ * Arrow keys (and Home / End) move the selection like a radio group.
  */
 export function Segmented<T extends string>({
   value,
@@ -40,11 +40,15 @@ export function Segmented<T extends string>({
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
 
   const onKey = (e: KeyboardEvent, i: number) => {
-    const dir = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+    const k = e.key;
+    // Home / End jump to the ends, then walk inward past disabled options.
+    const from = k === "Home" ? -1 : k === "End" ? options.length : i;
+    const dir =
+      k === "ArrowRight" || k === "ArrowDown" || k === "Home" ? 1 : k === "ArrowLeft" || k === "ArrowUp" || k === "End" ? -1 : 0;
     if (!dir) return;
     e.preventDefault();
     for (let n = 1; n <= options.length; n++) {
-      const j = (i + dir * n + options.length) % options.length;
+      const j = (from + dir * n + options.length * 2) % options.length;
       const o = options[j];
       if (o && !o.disabled) {
         onChange(o.value);
@@ -77,7 +81,7 @@ export function Segmented<T extends string>({
             title={o.title}
             onClick={() => onChange(o.value)}
             onKeyDown={(e) => onKey(e, i)}
-            className={`icon-host relative flex flex-1 items-center justify-center gap-1.5 rounded-full px-3.5 text-[12px] font-medium whitespace-nowrap transition-[color,transform] duration-150 active:scale-[0.96] disabled:opacity-45 ${
+            className={`hit icon-host relative flex flex-1 items-center justify-center gap-1.5 rounded-full px-3.5 text-[12px] font-medium whitespace-nowrap transition-[color,transform] duration-150 active:scale-[0.96] disabled:opacity-45 ${
               selected ? "text-fg" : "text-fg-2 hover:text-fg"
             }`}
           >

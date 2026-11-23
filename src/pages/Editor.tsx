@@ -1,0 +1,525 @@
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Button } from "../components/ui/Button";
+import { Card } from "../components/ui/Card";
+import { Spinner } from "../components/ui/Loader";
+import { PAGE_BOTTOM } from "../components/layout/page";
+import { editorEngine, releaseEditorStage } from "../editor/engine";
+import { stepOf } from "../editor/engine-photo";
+import {
+  EditorError,
+  validateJob,
+  type CropPreset,
+  type CropRect,
+  type EditJob,
+  type EditorCapabilities,
+  type EditorInput,
+  type EditorOutput,
+  type MediaKind,
+  type MediaProbe,
+} from "../editor/types";
+import { CropStage } from "../editor/ui/CropStage";
+import { applyPreset, fullRect, isFullFrame, presetRatio, roundCrop, type Size } from "../editor/ui/crop-math";
+import { EditorControls } from "../editor/ui/EditorControls";
+import { EditorHero } from "../editor/ui/EditorHero";
+import { TrimBar } from "../editor/ui/TrimBar";
+import { openFile } from "../state/native";
+import { notify } from "../state/toast";
+
+interface Loaded {
+  input: EditorInput;
+  probe: MediaProbe;
+  url: string;
+}
+
+type Phase = { phase: "empty" } | { phase: "loading"; name: string } | ({ phase: "ready" } & Loaded);
+
+const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+const revoke = (url: string | undefined) => {
+  if (url?.startsWith("blob:")) URL.revokeObjectURL(url);
+};
+
+const FULL_CAPS: EditorCapabilities = { crop: true, trim: true, mute: true, exactTrim: true };
+
+const defaultOutput = (input: EditorInput): EditorOutput =>
+  input.kind === "video" ? "mp4" : /\.png$/i.test(input.name) ? "png" : "jpg";
+
+/** Editor tab: pick one photo or video, crop / trim / mute it, export a new file. */
+export function EditorPage({ phone }: { phone: boolean }) {
+  const [state, setState] = useState<Phase>({ phase: "empty" });
+  const stateRef = useRef(state);
+  useLayoutEffect(() => {
+    stateRef.current = state;
+  }, [state]);
+  const loadAbort = useRef<AbortController | null>(null);
+
+  const [picking, setPicking] = useState(false);
+  const pickingRef = useRef(false);
+
+  const pick = useCallback(async (kind?: MediaKind) => {
+    if (pickingRef.current) return;
+    pickingRef.current = true;
+    setPicking(true);
+    let input: EditorInput | null;
+    try {
+      input = await editorEngine.pickMedia(kind);
+    } catch (e) {
+      notify({ tone: "error", title: "Couldn't open the file", body: errorText(e) });
+      return;
+    } finally {
+      pickingRef.current = false;
+      setPicking(false);
+    }
+    // null: the picker was closed without a choice (also Android's back button). Nothing to report.
+    if (!input) return;
+    const prev = stateRef.current;
+    loadAbort.current?.abort();
+    const ac = new AbortController();
+    loadAbort.current = ac;
+    setState({ phase: "loading", name: input.name });
+    // A cancelled load never restores `prev`, so its preview URL is freed here (nothing else holds it any more).
+    const dropPrev = () => {
+      if (prev.phase === "ready") revoke(prev.url);
+    };
+    const urlP = editorEngine.previewUrl(input);
+    try {
+      const [probe, url] = await Promise.all([editorEngine.probe(input, ac.signal), urlP]);
+      if (ac.signal.aborted) {
+        revoke(url);
+        dropPrev();
+        return;
+      }
+      if (!(probe.width > 0 && probe.height > 0) || (input.kind === "video" && !(probe.duration > 0))) {
+        revoke(url);
+        throw new EditorError("probe_failed", "Keepsake couldn't read this file's size or length.");
+      }
+      dropPrev();
+      setState({ phase: "ready", input, probe, url });
+    } catch (e) {
+      // A failed probe rejects Promise.all before the preview URL is used: free it (Android: a whole-file blob).
+      // Revoking twice (the size check above already did) is harmless.
+      void urlP.then(revoke, () => undefined);
+      if (ac.signal.aborted) {
+        dropPrev();
+        return;
+      }
+      if (!(e instanceof EditorError && e.code === "cancelled")) {
+        notify({
+          tone: "error",
+          title: e instanceof EditorError && e.code === "unsupported" ? "This file isn't supported" : "Couldn't open the file",
+          body: errorText(e),
+        });
+      }
+      setState(prev.phase === "loading" ? { phase: "empty" } : prev);
+    } finally {
+      if (loadAbort.current === ac) loadAbort.current = null;
+    }
+  }, []);
+
+  // Back to the start screen (frees the preview URL).
+  const close = useCallback(() => {
+    loadAbort.current?.abort();
+    const s = stateRef.current;
+    if (s.phase === "ready") revoke(s.url);
+    setState({ phase: "empty" });
+  }, []);
+
+  // Leaving the tab: stop probing and free the preview URL. A running export finishes on its own.
+  useEffect(
+    () => () => {
+      loadAbort.current?.abort();
+      const s = stateRef.current;
+      if (s.phase === "ready") revoke(s.url);
+    },
+    [],
+  );
+
+  if (state.phase === "empty") {
+    return (
+      <div className={`flex h-full min-w-0 flex-col ${PAGE_BOTTOM}`}>
+        <EditorHero phone={phone} busy={picking} onPick={(k) => void pick(k)} />
+      </div>
+    );
+  }
+
+  if (state.phase === "loading") {
+    return (
+      <div className={`flex h-full min-h-[320px] min-w-0 flex-col items-center justify-center gap-3 text-center ${PAGE_BOTTOM}`} aria-busy="true">
+        <Spinner size={28} label="Opening file" />
+        <div className="max-w-[320px] truncate text-[13px] text-fg-2" title={state.name}>
+          Opening {state.name}
+        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            loadAbort.current?.abort();
+            setState({ phase: "empty" });
+          }}
+        >
+          Cancel
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <EditorWorkspace
+      key={state.url}
+      loaded={state}
+      phone={phone}
+      onPick={(k) => void pick(k)}
+      onClose={close}
+    />
+  );
+}
+
+function EditorWorkspace({
+  loaded,
+  phone,
+  onPick,
+  onClose,
+}: {
+  loaded: Loaded;
+  phone: boolean;
+  onPick: (kind?: MediaKind) => void;
+  onClose: () => void;
+}) {
+  const { input, probe, url } = loaded;
+  const video = input.kind === "video";
+  const pw = probe.width;
+  const ph = probe.height;
+  const size = useMemo<Size>(() => ({ width: pw, height: ph }), [pw, ph]);
+  const duration = video ? probe.duration : 0;
+
+  const [preset, setPreset] = useState<CropPreset>("free");
+  const [crop, setCrop] = useState<CropRect>(() => fullRect(size));
+  const [audio, setAudio] = useState(probe.hasAudio);
+  const [output, setOutput] = useState<EditorOutput>(() => defaultOutput(input));
+  const [trim, setTrim] = useState<[number, number]>([0, duration]);
+  const [current, setCurrent] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  /** False until the first frame has decoded (shows a loading spinner over the preview meanwhile). */
+  const [frameReady, setFrameReady] = useState(false);
+  const [progress, setProgress] = useState<number | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [quality, setQuality] = useState(92);
+  const [saved, setSaved] = useState<{ name: string; path: string } | null>(null);
+  const exportAbort = useRef<AbortController | null>(null);
+  /** Latest runExport, for the error toast's Retry (a toast outlives the render that made it). */
+  const retryExport = useRef<(j: EditJob) => Promise<void>>(() => Promise.resolve());
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const trimRef = useRef(trim);
+  useLayoutEffect(() => {
+    trimRef.current = trim;
+  }, [trim]);
+
+  // What this platform can do with the video (null while checking; the first desktop check can take seconds).
+  // Photos are always fully editable. A failed check counts as full so the export reports the real error.
+  const [videoCaps, setVideoCaps] = useState<EditorCapabilities | null>(null);
+  useEffect(() => {
+    if (!video) return;
+    let live = true;
+    const check = editorEngine.capabilities?.("video") ?? Promise.resolve(FULL_CAPS);
+    void check
+      .catch(() => FULL_CAPS)
+      .then((c) => {
+        if (live) setVideoCaps(c);
+      });
+    return () => {
+      live = false;
+    };
+  }, [video]);
+  const checking = video && videoCaps === null;
+  const caps = video ? (videoCaps ?? FULL_CAPS) : FULL_CAPS;
+  // The crop frame shows at once (optimistic while checking); Export stays blocked until the check is done.
+  const canCrop = caps.crop;
+  const nothing = video && !checking && !caps.crop && !caps.trim && !caps.mute;
+
+  const ratio = presetRatio(preset, size);
+  const rounded = useMemo(() => roundCrop(crop, size, video), [crop, size, video]);
+  const cropped = !isFullFrame(rounded, size, video ? 1 : 0);
+
+  const job = useMemo<EditJob>(() => {
+    const j: EditJob = { input, audio: video ? probe.hasAudio && audio : false, output: video ? "mp4" : output };
+    if (cropped && canCrop) j.crop = rounded;
+    if (video) {
+      const [s, e] = trim;
+      if (s > 0.001) j.trimStart = Math.round(s * 1000) / 1000;
+      if (e < duration - 0.001) j.trimEnd = Math.round(e * 1000) / 1000;
+    }
+    if (j.output === "jpg") j.quality = Math.min(100, Math.max(1, Math.round(quality)));
+    return j;
+  }, [input, video, probe.hasAudio, audio, output, cropped, canCrop, rounded, trim, duration, quality]);
+  const invalid = validateJob(job, probe);
+
+  // React does not reliably reflect `muted`; set the property directly.
+  useEffect(() => {
+    if (videoRef.current) videoRef.current.muted = !audio || !probe.hasAudio;
+  }, [audio, probe.hasAudio]);
+
+  // Smooth playhead while playing; loop inside the trimmed range.
+  useEffect(() => {
+    if (!playing) return;
+    let raf = 0;
+    const tick = () => {
+      const v = videoRef.current;
+      if (v) {
+        const [s, e] = trimRef.current;
+        if (v.currentTime >= e || v.currentTime < s - 0.25) v.currentTime = s;
+        setCurrent(v.currentTime);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [playing]);
+
+  const seek = useCallback((t: number) => {
+    const v = videoRef.current;
+    if (v && Number.isFinite(t)) v.currentTime = t;
+    setCurrent(t);
+  }, []);
+
+  const togglePlay = () => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (!v.paused) {
+      v.pause();
+      return;
+    }
+    const [s, e] = trim;
+    if (v.currentTime < s || v.currentTime >= e - 0.05) v.currentTime = s;
+    void v.play().catch(() => setPlaying(false));
+  };
+
+  const onPreset = (p: CropPreset) => {
+    setPreset(p);
+    setCrop((c) => applyPreset(c, p, size));
+  };
+
+  /** `retry`: the exact job of a failed export (from the error toast), so a kept staged file is reused. */
+  const runExport = async (retry?: EditJob) => {
+    if (exporting || checking || (!retry && (invalid || nothing))) return;
+    const run = retry ?? job;
+    videoRef.current?.pause();
+    const ac = new AbortController();
+    exportAbort.current = ac;
+    setExporting(true);
+    setProgress(null);
+    setSaved(null);
+    let last = -1;
+    try {
+      const res = await editorEngine.exportEdit(
+        run,
+        (f) => {
+          const p = Math.round(Math.min(1, Math.max(0, Number.isFinite(f) ? f : 0)) * 100) / 100;
+          if (p !== last) {
+            last = p;
+            setProgress(p);
+          }
+        },
+        ac.signal,
+      );
+      setSaved({ name: res.name, path: res.path });
+      notify({
+        tone: "success",
+        title: "Saved",
+        body: res.notice ?? (res.displayPath ? `Saved to ${res.displayPath}` : res.path || res.name),
+        duration: 8000,
+        action: res.path ? { label: "Open", run: () => void openFile(res.path) } : undefined,
+      });
+    } catch (e) {
+      if (ac.signal.aborted || (e instanceof EditorError && e.code === "cancelled")) {
+        notify({ tone: "info", title: "Export cancelled" });
+      } else {
+        const code = e instanceof EditorError ? e.code : null;
+        const savingFailed = stepOf(e) === "save";
+        notify({
+          tone: "error",
+          title:
+            code === "no_space"
+              ? "Not enough free space"
+              : code === "permission"
+                ? "Keepsake can't save there"
+                : code === "unsupported"
+                  ? "This file can't be exported"
+                  : savingFailed
+                    ? "Couldn't save the edit"
+                    : "Export failed",
+          body: errorText(e),
+          // Retry sends the same EditJob, so the engine re-saves a kept staged file instead of re-encoding it.
+          action: code === "unsupported" || code === "invalid_job" ? undefined : { label: "Retry", run: () => void retryExport.current(run) },
+        });
+      }
+    } finally {
+      if (exportAbort.current === ac) exportAbort.current = null;
+      setExporting(false);
+      setProgress(null);
+    }
+  };
+  useLayoutEffect(() => {
+    retryExport.current = runExport;
+  });
+  // Leaving the editor: a toast's Retry no longer runs, and a kept staged file of a failed save is freed.
+  useEffect(
+    () => () => {
+      retryExport.current = () => Promise.resolve();
+      void releaseEditorStage();
+    },
+    [],
+  );
+
+  const media = video ? (
+    <>
+      <video
+        ref={videoRef}
+        src={url}
+        playsInline
+        preload="auto"
+        muted={!audio || !probe.hasAudio}
+        className="pointer-events-none block h-full w-full"
+        style={{ objectFit: "fill" }}
+        onLoadedMetadata={(e) => {
+          // Android WebView paints nothing until a frame is decoded for the current time, so the first
+          // frame only appeared once the user seeked. Seek to the trim start (or a tiny offset) right away.
+          const v = e.currentTarget;
+          const [s] = trimRef.current;
+          const max = v.duration > 0.1 ? v.duration - 0.05 : 0.001;
+          const t = Math.min(Math.max(s, 0.001), max);
+          v.currentTime = t;
+          setCurrent(t);
+        }}
+        onLoadedData={() => setFrameReady(true)}
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => setPlaying(false)}
+        onSeeked={(e) => {
+          setFrameReady(true);
+          if (e.currentTarget.paused) setCurrent(e.currentTarget.currentTime);
+        }}
+      />
+      {!frameReady && (
+        <div className="absolute inset-0 flex items-center justify-center bg-[#0b0908]" aria-busy="true">
+          <Spinner size={24} label="Loading preview" />
+        </div>
+      )}
+    </>
+  ) : (
+    <img src={url} alt={input.name} draggable={false} className="pointer-events-none block h-full w-full" style={{ objectFit: "fill" }} />
+  );
+
+  const stage = (
+    <CropStage
+      source={size}
+      crop={crop}
+      ratio={ratio}
+      onChange={(r) => {
+        if (!exporting) setCrop(r);
+      }}
+      phone={phone}
+      cropDisabled={!canCrop}
+      readout={`${rounded.w} × ${rounded.h}`}
+      className={phone ? "h-[min(56vh,520px)] min-h-[260px] w-full" : "h-[min(64vh,680px)] min-h-[320px] w-full"}
+    >
+      {media}
+    </CropStage>
+  );
+
+  const transport = video && (
+    <div className="flex min-w-0 items-center gap-3">
+      <PlayButton playing={playing} onClick={togglePlay} size={phone ? 44 : 36} disabled={exporting} />
+      <div className="min-w-0 flex-1">
+        <TrimBar
+          duration={duration}
+          start={trim[0]}
+          end={trim[1]}
+          current={current}
+          onChange={(s, e) => setTrim([s, e])}
+          onSeek={seek}
+          phone={phone}
+          disabled={exporting || !caps.trim}
+        />
+      </div>
+    </div>
+  );
+
+  const controls = (
+    <EditorControls
+      kind={input.kind}
+      name={input.name}
+      preset={preset}
+      onPreset={onPreset}
+      crop={rounded}
+      cropped={cropped}
+      onResetCrop={() => {
+        setPreset("free");
+        setCrop(fullRect(size));
+      }}
+      audio={audio}
+      hasAudio={probe.hasAudio}
+      onAudio={setAudio}
+      output={output}
+      onOutput={setOutput}
+      exporting={exporting}
+      progress={progress}
+      error={invalid}
+      onExport={() => void runExport()}
+      onCancel={() => exportAbort.current?.abort()}
+      onReplace={() => onPick(input.kind)}
+      onPickKind={(k) => onPick(k)}
+      quality={quality}
+      onQuality={setQuality}
+      trim={video ? trim : undefined}
+      duration={video ? duration : undefined}
+      canTrim={caps.trim}
+      saved={saved}
+      onOpenSaved={saved?.path ? () => void openFile(saved.path) : undefined}
+      onEditAnother={onClose}
+      phone={phone}
+      canCrop={canCrop}
+      canMute={caps.mute}
+      note={checking ? "Checking video tools..." : (caps.note ?? null)}
+      blocked={checking || nothing}
+    />
+  );
+
+  if (phone) {
+    return (
+      <div className={`flex min-w-0 flex-col gap-3 pt-1 ${PAGE_BOTTOM}`}>
+        {stage}
+        {transport}
+        <Card className="!p-4">{controls}</Card>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`grid min-w-0 grid-cols-[minmax(0,1fr)_300px] items-start gap-4 pt-1 ${PAGE_BOTTOM}`}>
+      <div className="flex min-w-0 flex-col gap-3">
+        {stage}
+        {transport}
+      </div>
+      <Card>{controls}</Card>
+    </div>
+  );
+}
+
+function PlayButton({ playing, onClick, size, disabled }: { playing: boolean; onClick: () => void; size: number; disabled?: boolean }) {
+  const label = playing ? "Pause" : "Play";
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      disabled={disabled}
+      onClick={onClick}
+      style={{ width: size, height: size }}
+      className="inline-flex shrink-0 items-center justify-center rounded-full bg-accent text-on-accent shadow-[inset_0_1px_0_rgba(255,255,255,0.22)] transition-[background-color,scale] duration-150 hover:bg-accent-hover active:scale-[0.94] disabled:pointer-events-none disabled:opacity-45"
+    >
+      <svg width={16} height={16} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        {playing ? <path d="M6 4h4v16H6zM14 4h4v16h-4z" /> : <path d="M7 4.5v15l12-7.5z" />}
+      </svg>
+    </button>
+  );
+}

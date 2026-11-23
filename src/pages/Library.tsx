@@ -17,6 +17,7 @@ import type { LibraryItem } from "../state/models";
 import { navigate, useCommand, type Command } from "../state/nav";
 import { loadUiPref, saveUiPref } from "../state/persist";
 import { useStats } from "../state/stats";
+import { PAGE_STACK } from "../components/layout/page";
 
 type Kind = "all" | DownloadMode;
 type Status = "all" | LibraryItem["status"];
@@ -69,6 +70,8 @@ export function LibraryPage({ phone }: { phone: boolean }) {
     return list;
   }, [items, q, kind, status, sort, cat]);
 
+  // Three stat tiles share a ~256px row at 320px: shrink the value so it is not clipped.
+  const statCls = phone ? "min-w-0 !p-2.5 [&_.tabular]:!text-[18px]" : "!p-3 [&_.tabular]:!text-[22px]";
   const columns = phone ? (tiny ? 1 : 2) : width > 0 && width < 760 ? 3 : 4;
   const clear = () => {
     setQ("");
@@ -84,11 +87,11 @@ export function LibraryPage({ phone }: { phone: boolean }) {
   if (items.length === 0) {
     return (
       <EmptyState
-        icon="library"
+        illustration="library"
         title="Your library is empty"
-        body="Finished downloads appear here with their snapshots."
+        body="Finished downloads land on this shelf with their snapshots, ready to keep."
         action={
-          <Button variant="primary" icon="home" onClick={() => navigate("home")}>
+          <Button variant="primary" size={phone ? "lg" : "md"} icon="home" onClick={() => navigate("home")}>
             Go to Home
           </Button>
         }
@@ -115,7 +118,7 @@ export function LibraryPage({ phone }: { phone: boolean }) {
   ];
 
   return (
-    <div ref={wrapRef} className="flex flex-col gap-4 pb-20">
+    <div ref={wrapRef} className={PAGE_STACK}>
       <section className="card shape-drop px-4 py-2">
         <Collapsible
           title="Insights"
@@ -124,17 +127,19 @@ export function LibraryPage({ phone }: { phone: boolean }) {
           open={insights}
           onOpenChange={setInsights}
         >
-          <div className={`grid gap-4 pb-3 ${phone || (width > 0 && width < 760) ? "grid-cols-1" : "grid-cols-[1.1fr_1fr_0.9fr]"}`}>
-            <div className="grid grid-cols-3 gap-2 self-start">
-              <StatCard label="Total" value={String(stats.total)} icon="layers" shape="leaf" className="!p-3 [&_.tabular]:!text-[22px]" />
+          <div
+            className={`grid gap-4 pb-3 ${phone || (width > 0 && width < 760) ? "grid-cols-[minmax(0,1fr)]" : "grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,0.9fr)]"}`}
+          >
+            <div className="grid min-w-0 grid-cols-3 gap-2 self-start">
+              <StatCard label="Total" value={String(stats.total)} icon="layers" shape="leaf" className={statCls} />
               <StatCard
                 label="Success"
                 value={stats.successRate === null ? "-" : `${stats.successRate}%`}
                 icon="check"
                 shape="tab"
-                className="!p-3 [&_.tabular]:!text-[22px]"
+                className={statCls}
               />
-              <StatCard label="Size" value={formatBytes(stats.totalBytes)} icon="database" shape="drop" tint className="!p-3 [&_.tabular]:!text-[22px]" />
+              <StatCard label="Size" value={formatBytes(stats.totalBytes)} icon="database" shape="drop" tint className={statCls} />
               <div className="col-span-3 pt-1">
                 <div className="mb-1 text-[11px] font-medium text-fg-2">Last 14 days</div>
                 <ActivityChart days={stats.last14Days} height={72} />
@@ -149,9 +154,9 @@ export function LibraryPage({ phone }: { phone: boolean }) {
               <ul className="flex flex-col">
                 {stats.bySite.slice(0, 6).map((s, i) => (
                   <li key={s.site} className="flex h-8 items-center gap-2 border-b border-line/60 text-[12px] last:border-b-0">
-                    <span className="tabular w-4 text-fg-3">{i + 1}</span>
+                    <span className="tabular w-4 shrink-0 text-fg-3">{i + 1}</span>
                     <span className="min-w-0 flex-1 truncate font-medium">{siteLabel(s.site)}</span>
-                    <span className="tabular text-fg-2">{s.count}</span>
+                    <span className="tabular shrink-0 text-fg-2">{s.count}</span>
                   </li>
                 ))}
                 {stats.bySite.length === 0 && <li className="py-2 text-fg-3">No sites yet</li>}
@@ -205,9 +210,13 @@ export function LibraryPage({ phone }: { phone: boolean }) {
       </div>
 
       {filtered.length === 0 ? (
-        <div className="flex flex-col items-center gap-3 py-16 text-center">
-          <div className="text-[15px] font-semibold">{q ? `No matches for "${q}"` : "No matches"}</div>
-          <Button onClick={clear}>Clear filters</Button>
+        <div className="flex min-w-0 flex-col items-center gap-3 py-16 text-center">
+          <div className="max-w-full text-[15px] font-semibold [overflow-wrap:anywhere]">
+            {q ? `No matches for "${q}"` : "No matches"}
+          </div>
+          <Button size={phone ? "lg" : "md"} onClick={clear}>
+            Clear filters
+          </Button>
         </div>
       ) : (
         <>
@@ -219,7 +228,7 @@ export function LibraryPage({ phone }: { phone: boolean }) {
             canReveal={getPlatform() !== "android"}
           />
           {filtered.length > limit && (
-            <Button className="self-center" onClick={() => setLimit((l) => l + PAGE)}>
+            <Button className="self-center" size={phone ? "lg" : "md"} onClick={() => setLimit((l) => l + PAGE)}>
               Show more
             </Button>
           )}

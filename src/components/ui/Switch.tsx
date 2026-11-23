@@ -25,7 +25,7 @@ export function Switch({
       onClick={() => onChange(!checked)}
       whileTap={disabled ? undefined : { scale: 0.94 }}
       transition={t.press}
-      className={`group relative h-5 w-10 shrink-0 rounded-full shadow-[inset_0_1px_2px_rgba(0,0,0,0.25)] transition-colors duration-150 disabled:pointer-events-none disabled:opacity-45 ${
+      className={`hit group relative h-5 w-10 shrink-0 rounded-full shadow-[inset_0_1px_2px_rgba(0,0,0,0.25)] transition-colors duration-150 disabled:pointer-events-none disabled:opacity-45 ${
         checked ? "bg-accent hover:bg-accent-hover" : "bg-line-strong hover:bg-fg-3"
       }`}
     >

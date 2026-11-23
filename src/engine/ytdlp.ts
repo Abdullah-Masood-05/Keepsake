@@ -40,6 +40,7 @@ export async function runYtdlp(
     if (isCancelled?.()) void cancelYtdlp(jobId).catch(() => undefined);
   };
   const ch = new Channel<YtdlpEvent>();
+  // oxlint-disable-next-line unicorn/prefer-add-event-listener -- Tauri Channel only exposes onmessage
   ch.onmessage = (m) => {
     if (!resentOnLine && isCancelled?.()) {
       resentOnLine = true;
@@ -114,6 +115,74 @@ function isFinal(code: AppError["code"]): boolean {
   return code === "cancelled" || code === "js_runtime_missing" || code === "ytdlp_missing";
 }
 
+// ---------------- TikTok / Instagram workaround ladder ----------------
+
+export type LadderSite = "tiktok" | "instagram";
+
+/** TikTok or Instagram host (any subdomain), else undefined. YouTube and every other site never ladder. */
+export function ladderSite(url: string): LadderSite | undefined {
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase().replace(/\.$/, "");
+  } catch {
+    return undefined;
+  }
+  const is = (d: string) => host === d || host.endsWith(`.${d}`);
+  if (is("tiktok.com")) return "tiktok";
+  if (is("instagram.com") || is("instagr.am")) return "instagram";
+  return undefined;
+}
+
+/**
+ * Extra args for attempts 2, 3, ... after a failed first attempt (attempt 1 adds nothing). Each step goes in front of
+ * `-- URL`; the user's cookie setting is kept as-is on every step and never widened.
+ * - tiktok step 2: the mobile API (yt-dlp README `tiktok:api_hostname`, `app_info`; the iid is a placeholder).
+ *   yt-dlp falls back to the webpage on its own when the API fails, so this is never worse than attempt 1.
+ * - instagram step 2: the iOS `X-IG-App-ID` (yt-dlp README `instagram:app_id`).
+ * - step 3: IPv4 only and a Safari TLS fingerprint (curl_cffi; the bundled yt-dlp lists safari targets).
+ */
+export const LADDER_STEPS: Readonly<Record<LadderSite, readonly (readonly string[])[]>> = {
+  tiktok: [
+    ["--extractor-args", "tiktok:api_hostname=api22-normal-c-alisg.tiktokv.com;app_info=7351144126450059040"],
+    ["--force-ipv4", "--impersonate", "safari"],
+  ],
+  instagram: [
+    ["--extractor-args", "instagram:app_id=ios"],
+    ["--force-ipv4", "--impersonate", "safari"],
+  ],
+};
+
+/** Steps to try after attempt 1 fails for this URL (empty for every non-TikTok/Instagram URL). */
+export function ladderSteps(url: string): readonly (readonly string[])[] {
+  const site = ladderSite(url);
+  return site ? LADDER_STEPS[site] : [];
+}
+
+/** Errors another request shape can fix. Everything else (cancel, missing binaries, disk, private, removed...) is final. */
+const LADDER_CODES: ReadonlySet<AppError["code"]> = new Set<AppError["code"]>([
+  "unknown",
+  "network",
+  "timeout",
+  "ssl",
+  "forbidden",
+  "rate_limited",
+  "login_required",
+  "ip_blocked",
+  "anti_bot",
+  "parse_failed",
+  "no_formats",
+]);
+
+/** True when a failure with this code may be retried with the next ladder step (exported for tests). */
+export function laddersAfter(code: AppError["code"]): boolean {
+  return LADDER_CODES.has(code) && !isFinal(code);
+}
+
+function ladderNote(err: AppError, steps: number): AppError {
+  const note = `Also tried ${steps} workaround${steps === 1 ? "" : "s"}.`;
+  return { ...err, detail: err.detail ? `${err.detail} ${note}` : note };
+}
+
 function assertHttpUrl(url: string) {
   let u: URL;
   try {
@@ -126,7 +195,8 @@ function assertHttpUrl(url: string) {
 
 /** Fixed args on every call (PLAN_v2 section B). The URL always goes last, after `--`. */
 function baseArgs(cookiesBrowser?: string): string[] {
-  // Rust already prepends `--ignore-config --no-plugin-dirs --no-js-runtimes --js-runtimes node` (ytdlp.rs).
+  // Rust already prepends `--ignore-config --no-plugin-dirs --no-js-runtimes --js-runtimes <runtime>:<path>` and
+  // `--ffmpeg-location` (ytdlp.rs): the bundled QuickJS (qjs) when present, else a user-installed node.
   const a = ["--encoding", "utf-8", "--no-warnings"];
   if (cookiesBrowser && cookiesBrowser !== "off") a.push("--cookies-from-browser", cookiesBrowser);
   return a;
@@ -191,11 +261,11 @@ function mapYdlInfo(j: YdlInfo, url: string): VideoInfo {
   }
   const heights = Object.keys(fpsByHeight)
     .map(Number)
-    .sort((a, b) => b - a);
-  const isPlaylist = j._type === "playlist";
+    .toSorted((a, b) => b - a);
+  const isPlaylist = j["_type"] === "playlist";
   const hasVideo = isPlaylist || streams.length === 0 || streams.some((s) => s.kind !== "audio-only");
-  const thumbs: Thumbnail[] = [...(j.thumbnails ?? [])]
-    .sort((a, b) => (b.preference ?? 0) - (a.preference ?? 0) || (b.width ?? 0) - (a.width ?? 0))
+  const thumbs: Thumbnail[] = (j.thumbnails ?? [])
+    .toSorted((a, b) => (b.preference ?? 0) - (a.preference ?? 0) || (b.width ?? 0) - (a.width ?? 0))
     .map((t) => ({ url: t.url, width: t.width, height: t.height }));
   if (thumbs.length === 0 && j.thumbnail) thumbs.push({ url: j.thumbnail });
   const d = j.upload_date;
@@ -232,6 +302,7 @@ export async function fetchInfoYtdlp(url: string, opts: InfoOpts = {}): Promise<
     return await fetchInfoOnce(url, opts);
   } catch (e) {
     const first = toAppError(e);
+    if (first.code !== "bot_check" && ladderSteps(url).length > 0) return fetchInfoLadder(url, opts, e, first);
     if (first.code !== "bot_check" || !wantsFallback(opts.cookiesBrowser)) throw e;
     const tried: string[] = [];
     for (const b of await fallbackBrowsers()) {
@@ -248,13 +319,29 @@ export async function fetchInfoYtdlp(url: string, opts: InfoOpts = {}): Promise<
   }
 }
 
-async function fetchInfoOnce(url: string, opts: InfoOpts): Promise<VideoInfo> {
+/** TikTok/Instagram only: after a ladderable first failure, try each LADDER_STEPS entry; rethrow the first error. */
+async function fetchInfoLadder(url: string, opts: InfoOpts, firstThrown: unknown, first: AppError): Promise<VideoInfo> {
+  if (!laddersAfter(first.code)) throw firstThrown;
+  const steps = ladderSteps(url);
+  for (const extra of steps) {
+    if (opts.signal?.aborted) fail("cancelled");
+    try {
+      return await fetchInfoOnce(url, opts, extra);
+    } catch (e2) {
+      if (opts.signal?.aborted) fail("cancelled");
+      if (!laddersAfter(toAppError(e2).code)) throw e2;
+    }
+  }
+  throw new EngineError(ladderNote(first, steps.length));
+}
+
+async function fetchInfoOnce(url: string, opts: InfoOpts, extra: readonly string[] = []): Promise<VideoInfo> {
   assertHttpUrl(url);
   const jobId = `info-${crypto.randomUUID()}`;
   const onAbort = () => void cancelYtdlp(jobId).catch(() => undefined);
   opts.signal?.addEventListener("abort", onAbort, { once: true });
   try {
-    const args = [...baseArgs(opts.cookiesBrowser), "-J", "-i", "--flat-playlist", "--", url];
+    const args = [...baseArgs(opts.cookiesBrowser), "-J", "-i", "--flat-playlist", ...extra, "--", url];
     const r = await runYtdlp(jobId, args, undefined, undefined, () => !!opts.signal?.aborted);
     if (opts.signal?.aborted) fail("cancelled");
     const json = r.stdout.find((l) => l.trimStart().startsWith("{"));
@@ -278,11 +365,96 @@ function sep(dir: string): string {
   return dir.includes("\\") ? "\\" : "/";
 }
 
-/** Build the yt-dlp argument list for a download (exported for tests). */
-export function buildDownloadArgs(req: DownloadRequest, outDir: string): { args: string[]; tempDir: string } {
-  assertHttpUrl(req.url);
+/** True when the fetched info lists a native M4A (AAC) audio-only stream. */
+function hasNativeM4a(info: VideoInfo | undefined): boolean {
+  return !!info && info.kind !== "playlist" && info.streams.some((st) => st.kind === "audio-only" && st.ext === "m4a");
+}
+
+/**
+ * `-f` and extraction args for an audio download.
+ * - m4a with a known native m4a stream: take that stream as-is, no `-x` (no ExtractAudio pass).
+ * - m4a otherwise (playlists, no info, no m4a stream): prefer m4a and keep `-x`; yt-dlp skips the conversion when the
+ *   file is already AAC in M4A.
+ * - opus: prefer the native Opus stream so `-x` is a stream copy into .opus.
+ * - mp3/wav/flac: best audio, converted by ffmpeg.
+ */
+function audioSelection(fmt: string, info: VideoInfo | undefined): string[] {
+  if (fmt === "m4a" && hasNativeM4a(info)) return ["-f", "bestaudio[ext=m4a]"];
+  const f =
+    fmt === "m4a"
+      ? "bestaudio[ext=m4a]/bestaudio/best"
+      : fmt === "opus"
+        ? "bestaudio[acodec=opus]/bestaudio/best"
+        : "bestaudio/best";
+  return ["-f", f, "-x", "--audio-format", fmt];
+}
+
+/** Per-job temp folder. Rust must keep it when a job fails (not cancelled) so Retry can resume from it. */
+export function keepTempOnFailure(jobId: string, outDir: string): string {
   const s = sep(outDir);
-  const tempDir = `${outDir.replace(/[\\/]+$/, "")}${s}.keepsake-tmp${s}${req.id}`;
+  return `${outDir.replace(/[\\/]+$/, "")}${s}.keepsake-tmp${s}${jobId}`;
+}
+
+const FILE_TEMPLATE = "%(title).80B [%(id)s].%(ext)s";
+const PLAYLIST_TEMPLATE = "%(playlist_title)s/%(playlist_index)s - %(title).80B [%(id)s].%(ext)s";
+
+/** Format-selection argv shared by desktop (buildDownloadArgs) and Android (self-contained yt-dlp). Video and audio only. */
+export function selectionArgs(
+  req: Pick<DownloadRequest, "formatId" | "info" | "streamId" | "preferH264" | "embedVideoMeta" | "audioBitrate" | "embedThumbnail">,
+  opts: { platform: "desktop" | "android"; heightFallback?: boolean },
+): string[] {
+  const [kind, value = ""] = req.formatId.split(":");
+  const a: string[] = [];
+  if (kind === "video") {
+    const h = value === "best" ? 0 : Number.parseInt(value, 10) || 0;
+    const cap = h ? `[height<=${h}]` : "";
+    if (opts.platform === "android") {
+      a.push("-f", `bestvideo${cap}+bestaudio/best${cap}/best`);
+      if (req.preferH264) a.push("-S", "res,fps,vcodec:h264,acodec:aac");
+      a.push("--merge-output-format", "mp4/mkv");
+      return a;
+    }
+    const picked = !opts.heightFallback && req.streamId && req.info?.streams.find((st) => st.id === req.streamId);
+    if (picked) {
+      a.push("-f", picked.kind === "video-only" ? `${picked.id}+bestaudio[ext=m4a]/${picked.id}+bestaudio` : picked.id);
+    } else {
+      a.push("-f", `bestvideo${cap}+bestaudio/best${cap}/best`);
+      if (req.preferH264) a.push("-S", "res,fps,vcodec:h264,acodec:aac");
+    }
+    a.push("--merge-output-format", "mp4/mkv");
+    // Each embed pass rewrites the whole video file, so video embeds are opt-in (Settings, default off).
+    if (req.embedVideoMeta === true) a.push("--embed-thumbnail", "--convert-thumbnails", "jpg", "--embed-metadata");
+    return a;
+  }
+  if (kind === "audio") {
+    const fmt = value || "mp3";
+    if (opts.platform === "android") {
+      // WAV is transcoded from the M4A afterwards by the caller.
+      if (fmt === "m4a" || fmt === "wav") return ["-f", "bestaudio[ext=m4a]/bestaudio/best", "-x", "--audio-format", "m4a"];
+      return fail("format_unavailable", req.formatId);
+    }
+    a.push(...audioSelection(fmt, req.info));
+    if (fmt === "mp3" || fmt === "opus") a.push("--audio-quality", `${req.audioBitrate ?? 192}K`);
+    // Python bug not ported: never embed into WebM. Embed cover art for mp3/m4a only (Settings, default on).
+    if (req.embedThumbnail !== false && (fmt === "mp3" || fmt === "m4a")) {
+      a.push("--embed-thumbnail", "--convert-thumbnails", "jpg");
+    }
+    a.push("--embed-metadata");
+    return a;
+  }
+  return fail("format_unavailable", req.formatId);
+}
+
+/** Build the yt-dlp argument list for a download (exported for tests). */
+export function buildDownloadArgs(
+  req: DownloadRequest,
+  outDir: string,
+  opts: { heightFallback?: boolean; extra?: readonly string[] } = {},
+): { args: string[]; tempDir: string } {
+  assertHttpUrl(req.url);
+  const tempDir = keepTempOnFailure(req.id, outDir);
+  const isPlaylist = req.info?.kind === "playlist";
+  const outTmpl = isPlaylist ? PLAYLIST_TEMPLATE : FILE_TEMPLATE;
   // Keep full paths under ~240 chars on Windows.
   const trim = Math.max(60, Math.min(200, 240 - outDir.length));
   const a = [
@@ -303,38 +475,32 @@ export function buildDownloadArgs(req: DownloadRequest, outDir: string): { args:
     "--print",
     "after_move:KEEPSAKE_DONE|%(filepath)s",
     "-i",
+    "--retries",
+    "10",
+    "--fragment-retries",
+    "10",
+    "--socket-timeout",
+    "30",
+    "--concurrent-fragments",
+    "4",
   ];
+  if (!isPlaylist) a.push("--no-playlist");
   const [kind, value = ""] = req.formatId.split(":");
-  const embed = req.embedThumbnail !== false;
 
   if (kind === "video") {
-    a.push("-o", "%(title)s.%(ext)s");
-    const h = value === "best" ? 0 : Number.parseInt(value, 10) || 0;
-    const cap = h ? `[height<=${h}]` : "";
-    const picked = req.streamId && req.info?.streams.find((st) => st.id === req.streamId);
-    if (picked) {
-      a.push("-f", picked.kind === "video-only" ? `${picked.id}+bestaudio[ext=m4a]/${picked.id}+bestaudio` : picked.id);
-    } else {
-      a.push("-f", `bestvideo${cap}+bestaudio/best${cap}/best`);
-      if (req.preferH264) a.push("-S", "res,fps,vcodec:h264,acodec:aac");
-    }
-    a.push("--merge-output-format", "mp4/mkv");
-    if (embed) a.push("--embed-thumbnail", "--convert-thumbnails", "jpg");
-    a.push("--embed-metadata");
+    a.push("-o", outTmpl, ...selectionArgs(req, { platform: "desktop", heightFallback: opts.heightFallback }));
   } else if (kind === "audio") {
-    a.push("-o", "%(title)s.%(ext)s", "-f", "bestaudio/best", "-x", "--audio-format", value || "mp3");
-    if (value === "mp3" || value === "opus") a.push("--audio-quality", `${req.audioBitrate ?? 192}K`);
-    // Python bug not ported: never embed into WebM. Embed for mp3/m4a only.
-    if (embed && (value === "mp3" || value === "m4a")) a.push("--embed-thumbnail", "--convert-thumbnails", "jpg");
-    a.push("--embed-metadata");
+    a.push("-o", outTmpl, ...selectionArgs(req, { platform: "desktop", heightFallback: opts.heightFallback }));
   } else if (kind === "thumb") {
-    a.push("--skip-download", "--write-thumbnail", "-o", "thumbnail:%(title)s_thumb.%(ext)s");
+    a.push("--skip-download", "--write-thumbnail", "-o", "thumbnail:%(title).80B [%(id)s]_thumb.%(ext)s");
     if (value === "png" || value === "jpg") a.push("--convert-thumbnails", value);
     // --skip-download never reaches after_move; print the written thumbnail path instead (INFERRED).
     a.push("--print", "after_video:KEEPSAKE_DONE|%(thumbnails.-1.filepath)s");
   } else {
     fail("format_unavailable", req.formatId);
   }
+  // Ladder step args (TikTok/Instagram retries only); attempt 1 passes none, so its argv is unchanged.
+  if (opts.extra) a.push(...opts.extra);
   a.push("--", req.url);
   return { args: a, tempDir };
 }
@@ -364,12 +530,69 @@ export function parseProgressLine(line: string): Partial<DownloadProgress> | nul
   };
 }
 
+/** yt-dlp names a per-format part `<stem> [<id>].f<format_id>.<ext>` (prepend_extension); both templates end in `[%(id)s]`. */
+const PART_RE = /\]\.f[^.\\/]+\.[A-Za-z0-9]+$/;
+
+/**
+ * True for a yt-dlp per-format part (`.f137.mp4`, `.f251.webm`): never a deliverable file (exported for tests).
+ * `name`: the literal file name given to yt-dlp (Android `<name>.%(ext)s`), checked exactly as `<name>.f<id>.<ext>`.
+ */
+export function isFormatPart(path: string, name?: string): boolean {
+  if (!name) return PART_RE.test(path);
+  const file = path.split(/[\\/]/).pop() ?? "";
+  return file.startsWith(`${name}.`) && /^f[^.\\/]+\.[A-Za-z0-9]+$/.test(file.slice(name.length + 1));
+}
+
+/**
+ * Watches yt-dlp output for a skipped merge (exported for tests). A video that downloaded `.fNNN` parts must run
+ * the `Merger` postprocessor before its `after_move` print; without it (ffmpeg not found, a warning that
+ * `--no-warnings` hides and `-i` makes non-fatal) yt-dlp moves the bare video-only and audio-only parts into the
+ * output folder and still exits 0. `done()` returns those parts for that video (empty when it merged), then resets.
+ */
+export function mergeTracker() {
+  let parts = new Set<string>();
+  let merged = false;
+  return {
+    line(line: string): void {
+      const i = line.indexOf("KEEPSAKE|");
+      if (i >= 0) {
+        const file = line.slice(i).split("|").slice(9).join("|").trim();
+        if (isFormatPart(file)) parts.add(file);
+      } else if (line.includes("KEEPSAKE_PP|") && line.split("|")[2]?.trim() === "Merger") {
+        merged = true;
+      }
+    },
+    done(finalPath: string): string[] {
+      const left = merged ? [] : [...parts];
+      if (isFormatPart(finalPath) && !left.includes(finalPath)) left.push(finalPath);
+      parts = new Set();
+      merged = false;
+      return left;
+    },
+  };
+}
+
+/** Slash- and case-insensitive form of a path, for prefix checks only. */
+function normPath(p: string): string {
+  return p.replace(/[\\/]+/g, "/").replace(/\/$/, "").toLowerCase();
+}
+
+const mergeError = (): AppError =>
+  appError("ffmpeg_missing", "Video and audio were downloaded separately but not merged; the parts were deleted.");
+
+/** Where yt-dlp moved a part from `tempDir` into `outDir` (`-P temp:` / `-P home:` keep the relative path). */
+export function movedPartPath(part: string, tempDir: string, outDir: string): string {
+  const t = normPath(tempDir);
+  if (!normPath(part).startsWith(`${t}/`)) return part;
+  return `${outDir.replace(/[\\/]+$/, "")}${sep(outDir)}${part.slice(tempDir.replace(/[\\/]+$/, "").length + 1)}`;
+}
+
 /**
  * Download with yt-dlp. On a bot check with Settings > Cookies "off", retries once per installed browser
  * (COOKIE_FALLBACK_ORDER) with `--cookies-from-browser`, stops at the first success and sets
  * `note: "Retried with cookies from <Browser>"`. An explicit browser choice is never overridden.
- * Every attempt reuses the job id: Rust drops the job from its table and deletes `.keepsake-tmp/<id>` after
- * each exit, so cancel_ytdlp and the temp cleanup behave the same on every attempt.
+ * Every attempt reuses the job id: Rust drops the job from its table after each exit and keeps
+ * `.keepsake-tmp/<id>` after a failed run (so Retry can resume), deleting it only after success or cancel.
  */
 export async function downloadYtdlp(
   req: DownloadRequest,
@@ -377,7 +600,16 @@ export async function downloadYtdlp(
   emit: (p: DownloadProgress) => void,
   isCancelled: () => boolean,
 ): Promise<DownloadProgress> {
-  const first = await downloadOnce(req, outDir, emit, isCancelled);
+  let first = await downloadOnce(req, outDir, emit, isCancelled);
+  let heightFallback = false;
+  // A picked stream that yt-dlp rejects: retry once with the height-based selector for the same request.
+  if (first.status === "failed" && first.error?.code === "format_unavailable" && req.streamId && !isCancelled()) {
+    heightFallback = true;
+    first = await downloadOnce(req, outDir, emit, isCancelled, true);
+  }
+  if (first.status === "failed" && first.error && first.error.code !== "bot_check" && ladderSteps(req.url).length > 0) {
+    return downloadLadder(req, outDir, emit, isCancelled, first, heightFallback);
+  }
   if (first.status !== "failed" || first.error?.code !== "bot_check" || !wantsFallback(req.cookiesBrowser)) {
     return first;
   }
@@ -401,20 +633,65 @@ export async function downloadYtdlp(
   return { ...first, error: triedDetail(first.error, tried) };
 }
 
+/**
+ * TikTok/Instagram only: after a ladderable failure, retry with each LADDER_STEPS entry (same request, same cookie
+ * setting, same job id and temp folder) and stop at the first success or at a final error.
+ */
+async function downloadLadder(
+  req: DownloadRequest,
+  outDir: string,
+  emit: (p: DownloadProgress) => void,
+  isCancelled: () => boolean,
+  first: DownloadProgress,
+  heightFallback: boolean,
+): Promise<DownloadProgress> {
+  if (!first.error || !laddersAfter(first.error.code)) return first;
+  const steps = ladderSteps(req.url);
+  for (const extra of steps) {
+    if (isCancelled()) return { id: req.id, status: "cancelled", downloadedBytes: 0, error: appError("cancelled") };
+    emit({ id: req.id, status: "downloading", downloadedBytes: 0 });
+    let r: DownloadProgress;
+    try {
+      r = await downloadOnce(req, outDir, emit, isCancelled, heightFallback, extra);
+    } catch (e) {
+      if (isCancelled() || !laddersAfter(toAppError(e).code)) throw e;
+      continue;
+    }
+    if (r.status === "done") return { ...r, note: r.note ?? "Retried with a workaround" };
+    if (r.status === "cancelled" || !r.error || !laddersAfter(r.error.code)) return r;
+  }
+  return { ...first, error: ladderNote(first.error, steps.length) };
+}
+
 async function downloadOnce(
   req: DownloadRequest,
   outDir: string,
   emit: (p: DownloadProgress) => void,
   isCancelled: () => boolean,
+  heightFallback = false,
+  extra?: readonly string[],
 ): Promise<DownloadProgress> {
-  const { args, tempDir } = buildDownloadArgs(req, outDir);
+  const { args, tempDir } = buildDownloadArgs(req, outDir, { heightFallback, extra });
   let last: DownloadProgress = { id: req.id, status: "downloading", downloadedBytes: 0 };
   const files: string[] = [];
   const errors: string[] = [];
+  const failedIdx = new Set<string>();
+  const merge = mergeTracker();
+  const unmerged: string[] = [];
   const r = await runYtdlp(
     req.id,
     args,
     (line) => {
+      merge.line(line);
+      if (line.startsWith("KEEPSAKE_DONE|")) {
+        const left = merge.done(line.slice("KEEPSAKE_DONE|".length));
+        if (left.length > 0) {
+          // Skipped merge: the parts are not a result. Count the video as failed, delete them below.
+          unmerged.push(...left);
+          failedIdx.add(String(last.playlistIndex ?? `unmerged-${unmerged.length}`));
+          return;
+        }
+      }
       const p = parseProgressLine(line);
       if (p) {
         last = { ...last, ...p, id: req.id };
@@ -429,25 +706,45 @@ async function downloadOnce(
         files.push(line.slice("KEEPSAKE_DONE|".length));
       } else if (line.includes("ERROR:")) {
         errors.push(line);
+        failedIdx.add(String(last.playlistIndex ?? errors.length));
       }
     },
     tempDir,
     isCancelled,
   );
+  // Deliver exactly one file per video: never leave unmerged video-only/audio-only parts in the user's folder.
+  if (unmerged.length > 0) {
+    // Loaded lazily: tests mock "@tauri-apps/api/core" process-wide without `Resource`, which plugin-fs links against.
+    const fs = await import("@tauri-apps/plugin-fs").catch(() => undefined);
+    for (const part of new Set(unmerged.map((p) => movedPartPath(p, tempDir, outDir)))) {
+      await fs?.remove(part).catch(() => undefined);
+    }
+  }
   if (isCancelled()) return { ...last, status: "cancelled", error: appError("cancelled") };
   const finalPath = files[files.length - 1];
   const count = last.playlistCount;
+  if (!(count && count > 1) && unmerged.length > 0) {
+    return { ...last, status: "failed", error: mergeError() };
+  }
   if (count && count > 1) {
     // Playlist: "N videos, M failed"; all failed = error.
     if (files.length === 0) {
-      return { ...last, status: "failed", error: friendlyError(lastError(errors.length ? errors : r.stderr)) };
+      const err = unmerged.length > 0 && errors.length === 0 ? mergeError() : friendlyError(lastError(errors.length ? errors : r.stderr));
+      return { ...last, status: "failed", error: err };
     }
-    const failed = errors.length;
-    const err = failed ? { ...appError("unknown"), message: `${files.length} videos, ${failed} failed` } : undefined;
+    const failed = failedIdx.size;
+    const err =
+      failed && count > 0
+        ? { ...appError("unknown"), message: `Saved ${files.length} of ${count} videos` }
+        : undefined;
     return { ...last, status: "done", percent: 100, filePath: finalPath, error: err };
   }
-  if (r.code !== 0 || !finalPath) {
+  if (!finalPath) {
     return { ...last, status: "failed", error: friendlyError(lastError(errors.length ? errors : r.stderr)) };
+  }
+  if (r.code !== 0) {
+    // File was written and its path printed: keep it, flag the non-zero exit.
+    return { ...last, status: "done", percent: 100, filePath: finalPath, note: "Finished with warnings" };
   }
   return { ...last, status: "done", percent: 100, filePath: finalPath };
 }

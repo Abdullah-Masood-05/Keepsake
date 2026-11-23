@@ -1,12 +1,8 @@
 {
   "bundle": {
-    "targets": ["nsis", "msi"],
+    "targets": ["nsis"],
     "windows": {
       "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true },
-      "wix": {
-        "bannerPath": "installer/wix-banner.bmp",
-        "dialogImagePath": "installer/wix-dialog.bmp"
-      },
       "nsis": {
         "installMode": "currentUser",
         "installerIcon": "icons/icon.ico",

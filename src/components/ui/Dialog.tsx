@@ -1,17 +1,21 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { useIsPhone } from "../../state/hooks";
 import { IconButton } from "./Button";
 import { t } from "./motion";
+import { useModal } from "./useModal";
 
 /**
- * Modal dialog. Esc and backdrop click close it; focus moves into the panel and
- * returns to the opener on close. Rendered in a portal so a transformed ancestor
- * (pressed row, animating card) can never offset the fixed overlay.
+ * Modal dialog. Esc and backdrop click close it; Tab is trapped inside, body scroll
+ * is locked, focus moves into the panel and returns to the opener on close
+ * (useModal). Rendered in a portal so a transformed ancestor (pressed row,
+ * animating card) can never offset the fixed overlay.
  *
  * - default: centered, `width` px wide (capped by the 16px gutter), max 85vh.
- * - `phone`: centered phone modal, calc(100vw - 32px) wide (max 480), max 85vh,
- *   16px padding, 48px close button. Replaces bottom sheets (UI_MOBILE.md).
+ * - `phone` on a phone-width viewport: bottom sheet, full width (max 560),
+ *   max 85dvh, internal scroll, padded by the bottom safe-area inset.
+ * - `phone` on a wider viewport: centered, calc(100vw - 32px) wide (max 480).
  * - `fullScreen`: covers the viewport, close button top-left.
  */
 export function Dialog({
@@ -40,50 +44,43 @@ export function Dialog({
 }) {
   const reduced = useReducedMotion();
   const panel = useRef<HTMLDivElement>(null);
-  // Callers often pass an inline onClose; keep the effect tied to `open` only so
-  // re-renders (progress ticks) don't steal focus back to the first control.
+  const phoneWidth = useIsPhone();
+  const sheet = !!phone && phoneWidth && !fullScreen;
   const closeRef = useRef(onClose);
   useEffect(() => {
     closeRef.current = onClose;
   });
-
-  useEffect(() => {
-    if (!open) return;
-    const prev = document.activeElement as HTMLElement | null;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        // An open dropdown inside the dialog takes Esc first.
-        if (document.querySelector("[data-popover]")) return;
-        e.stopPropagation();
-        closeRef.current();
-      }
-    };
-    window.addEventListener("keydown", onKey, true);
-    const raf = requestAnimationFrame(() => {
-      const first = panel.current?.querySelector<HTMLElement>(
-        "input, button:not([data-close]):not(:disabled), select, [tabindex]",
-      );
-      (first ?? panel.current)?.focus();
-    });
-    return () => {
-      cancelAnimationFrame(raf);
-      window.removeEventListener("keydown", onKey, true);
-      prev?.focus?.();
-    };
-  }, [open]);
+  useModal(open, panel, onClose);
 
   const pad = phone ? "px-4" : "px-5";
   const panelStyle = fullScreen
     ? undefined
-    : phone
-      ? { width: "calc(100vw - 32px)", maxWidth: 480 }
-      : { width, maxWidth: "100%" };
+    : sheet
+      ? { width: "100%", maxWidth: 560, paddingBottom: "env(safe-area-inset-bottom, 0px)" }
+      : phone
+        ? { width: "calc(100vw - 32px)", maxWidth: 480 }
+        : { width, maxWidth: "100%" };
+
+  const enter = reduced
+    ? { opacity: 0 }
+    : sheet
+      ? { opacity: 1, y: "100%" }
+      : { opacity: 0, scale: phone ? 0.94 : 0.97, y: phone ? 12 : 6 };
+  const leave = reduced ? { opacity: 0 } : sheet ? { opacity: 1, y: "100%" } : { opacity: 0, scale: 0.98 };
+
+  const shape = fullScreen
+    ? "safe-top safe-bottom h-full max-h-full w-full"
+    : sheet
+      ? "max-h-[85dvh] rounded-t-[24px] border border-b-0 border-line"
+      : `${phone ? "max-h-[85dvh]" : "max-h-[85vh]"} border border-line shadow-[inset_0_1px_0_rgba(255,255,255,0.05),var(--shadow-pop)] ${phone ? "rounded-[22px_22px_22px_10px]" : "rounded-[24px_24px_24px_10px]"}`;
 
   const tree = (
     <AnimatePresence>
       {open && (
         <motion.div
-          className={`fixed inset-0 z-50 flex items-center justify-center bg-black/55 ${fullScreen ? "" : "p-4"}`}
+          className={`fixed inset-0 z-50 flex justify-center bg-black/55 ${
+            sheet ? "items-end" : fullScreen ? "items-center" : "items-center p-4"
+          }`}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -100,19 +97,16 @@ export function Dialog({
             aria-modal="true"
             aria-label={title}
             tabIndex={-1}
-            initial={reduced ? { opacity: 0 } : { opacity: 0, scale: phone ? 0.94 : 0.97, y: phone ? 12 : 6 }}
+            initial={enter}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={reduced ? { opacity: 0 } : { opacity: 0, scale: 0.98 }}
+            exit={leave}
             transition={reduced ? t.fast : t.spring}
             style={panelStyle}
-            className={`flex flex-col bg-card text-fg shadow-pop outline-none ${
-              fullScreen
-                ? "safe-top safe-bottom h-full max-h-full w-full"
-                : `max-h-[85vh] border border-line shadow-[inset_0_1px_0_rgba(255,255,255,0.05),var(--shadow-pop)] ${phone ? "rounded-[22px_22px_22px_10px]" : "rounded-[24px_24px_24px_10px]"}`
-            }`}
+            className={`modal-panel flex flex-col bg-card text-fg shadow-pop outline-none ${shape}`}
           >
+            {sheet && <span aria-hidden="true" className="mx-auto mt-2 h-1 w-9 shrink-0 rounded-full bg-line-strong" />}
             <header
-              className={`flex shrink-0 items-start gap-3 ${pad} ${phone ? "pt-3 pr-2" : "pt-5"} ${fullScreen ? "flex-row-reverse justify-end" : ""}`}
+              className={`flex shrink-0 items-start gap-3 ${pad} ${phone ? (sheet ? "pt-1 pr-2" : "pt-3 pr-2") : "pt-5"} ${fullScreen ? "flex-row-reverse justify-end" : ""}`}
             >
               <div className={`min-w-0 flex-1 ${phone ? "pt-[13px]" : ""}`}>
                 <h2 className={`text-[15px] leading-[22px] font-semibold ${phone ? "line-clamp-2 break-words" : ""}`}>
@@ -207,7 +201,7 @@ function ButtonLite({
     <button
       type="button"
       onClick={onClick}
-      className={`h-9 rounded-md px-4 text-[12px] font-medium transition-colors duration-150 ${cls}`}
+      className={`hit h-9 rounded-md px-4 text-[12px] font-medium transition-colors duration-150 ${cls}`}
     >
       {children}
     </button>

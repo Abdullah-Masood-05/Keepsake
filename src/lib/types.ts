@@ -59,8 +59,13 @@ export interface VideoInfo {
   /** True when only a preview is playable (sign-in may be needed). */
   previewOnly: boolean;
   playlistCount?: number;
-  /** Which backend produced this info. */
+  /** Which backend produced this info. "ytdlp" = desktop sidecar, or Chaquopy yt-dlp on Android (TikTok/Instagram). */
   source: "youtubei" | "ytdlp";
+  /**
+   * Android only: true when the info came from the self-contained yt-dlp route (bundled JS runtime + EJS + ffmpeg),
+   * so formats are unfiltered (HLS/DASH kept) and the download goes through yt-dlp's own selectors and merge.
+   */
+  ytdlpFull?: boolean;
 }
 
 /** One choice in the FormatPicker. */
@@ -80,9 +85,9 @@ export interface FormatOption {
   isDefault: boolean;
   /** Needs a merge of separate video + audio streams (desktop yt-dlp only). */
   needsMerge: boolean;
-  /** Needs an ffmpeg conversion step. On Android/web that is ffmpeg.wasm. */
+  /** Needs a conversion step: ffmpeg via yt-dlp on desktop, the keepsake-media plugin on Android. */
   needsConversion: boolean;
-  /** Set when the option is shown but cannot be used on this platform. */
+  /** Set when the option is shown but cannot be used yet (e.g. "Fetch a video first"). */
   disabledReason?: string;
 }
 
@@ -99,9 +104,14 @@ export interface DownloadRequest {
   streamId?: string;
   audioBitrate?: AudioBitrate;
   preferH264?: boolean;
+  /** Audio (MP3/M4A): embed the thumbnail as cover art. Default on (undefined = on). Desktop only. */
   embedThumbnail?: boolean;
+  /** Video: embed thumbnail and metadata (each pass rewrites the file). Default off (only `true` turns it on). Desktop only. */
+  embedVideoMeta?: boolean;
   /** Absolute folder. Empty/undefined = system Downloads folder. */
   outputDir?: string;
+  /** Android: persisted SAF tree URI (content://) to save into. Empty/undefined = not used. */
+  outputTreeUri?: string;
   /** Settings > Cookies value ("off" or a browser name). Desktop only. */
   cookiesBrowser?: string;
 }
@@ -118,6 +128,7 @@ export type DownloadStatus =
 export interface DownloadProgress {
   id: string;
   status: DownloadStatus;
+  stage?: string;
   downloadedBytes: number;
   totalBytes?: number;
   /** 0..100, undefined when unknown (indeterminate bar). */
@@ -133,6 +144,10 @@ export interface DownloadProgress {
   error?: AppError;
   /** Short status note on a final result, e.g. "Retried with cookies from Edge". */
   note?: string;
+  /** Set on a successful result when the file was kept somewhere other than requested (e.g. Gallery copy failed). */
+  notice?: string;
+  /** Friendly folder the file was saved to (Android), e.g. "Download/Keepsake". */
+  displayPath?: string;
 }
 
 export interface DownloadHandle {
@@ -150,7 +165,10 @@ export interface BinaryStatus {
   ffmpeg: BinaryState;
   ytdlpVersion?: string;
   ffmpegVersion?: string;
-  /** Desktop: Node.js for yt-dlp's YouTube challenge solver ("missing" = YouTube downloads fail). */
+  /**
+   * Desktop: JS runtime for yt-dlp's YouTube challenge solver (bundled QuickJS, else a user-installed Node.js).
+   * "missing" = YouTube downloads fail. Field name kept as `node` for compatibility.
+   */
   node?: BinaryState;
   nodeVersion?: string;
 }
@@ -179,14 +197,27 @@ export type AppErrorCode =
   | "ytdlp_missing"
   | "js_runtime_missing"
   | "no_formats"
+  | "no_space"
+  | "permission"
+  | "too_large"
+  | "mux_failed"
+  | "empty"
+  | "spawn"
   | "bad_folder"
   | "empty_url"
   | "web_cors"
   | "cancelled"
+  | "gallery_failed"
+  | "gallery_permission"
+  | "folder_grant_lost"
+  | "folder_source_missing"
+  | "folder_bad_uri"
+  | "folder_failed"
   | "unknown";
 
 export interface AppError {
   code: AppErrorCode;
+  title?: string;
   /** Friendly text. Includes "(Details: ...)" when the raw text adds information. */
   message: string;
   /** Cleaned raw error, for the "Show details" disclosure and "Copy error". */
@@ -202,7 +233,7 @@ export const COOKIE_HINT =
 /** Friendly texts ported from workers/errors.py `friendly_error`, word for word except the two rewordings. */
 export const ERROR_TEXT: Record<AppErrorCode, string> = {
   unsupported_url:
-    "This site or link isn't supported by yt-dlp. Check that the URL points to a video or audio page, not a homepage or search page.",
+    "This site or link isn't supported. Check that the URL points to a video or audio page, not a homepage or search page.",
   drm: "This video is DRM protected and can't be downloaded.",
   age_restricted: `This video is age restricted and needs a logged-in account. ${COOKIE_HINT}`,
   bot_check:
@@ -210,27 +241,42 @@ export const ERROR_TEXT: Record<AppErrorCode, string> = {
   password: "This video is password protected, which isn't supported yet.",
   anti_bot: `The site blocked the request with an anti-bot check. ${COOKIE_HINT}`,
   ip_blocked: "The site is blocking your IP address. A different network or VPN may help.",
-  parse_failed: `Couldn't read this page. It may need a login, or the site changed and yt-dlp needs updating. ${COOKIE_HINT}`,
+  parse_failed: `Couldn't read this page. It may need a login, or the site changed. ${COOKIE_HINT}`,
   geo_blocked: "This video isn't available in your country. A VPN may help.",
   private: `This video is private. If your account can view it, ${COOKIE_HINT[0].toLowerCase()}${COOKIE_HINT.slice(1)}`,
   unavailable: "This video is unavailable (removed, deleted or private).",
-  login_required: `This content needs you to be logged in, or the site is rate-limiting anonymous access. ${COOKIE_HINT}`,
+  login_required:
+    "This post needs you to be signed in. Choose your browser under Settings > Cookies.",
   format_unavailable:
     "The selected quality isn't available for this video. Pick another quality or use Best.",
-  rate_limited: `The site is rate-limiting you (HTTP 429). Wait a few minutes and try again. ${COOKIE_HINT}`,
-  forbidden: `The site refused access (HTTP 403). The video may be restricted or need a login. ${COOKIE_HINT}`,
-  not_found: "Not found (HTTP 404). The link may be wrong or the video was removed.",
+  rate_limited: "This site is asking us to slow down. Wait a few minutes, then try again.",
+  forbidden:
+    "The site wouldn't let us download this. Try again, or choose your browser under Settings > Cookies.",
+  not_found: "We couldn't find that page. Check the link.",
   network: "Couldn't reach the site. Check your internet connection and try again.",
   timeout: "The connection timed out. Check your internet connection and try again.",
-  ssl: "A secure connection (SSL) to the site failed. Check your connection, system clock, or any proxy/antivirus interfering.",
-  ffmpeg_missing: "ffmpeg is missing. Merging and audio conversion won't work. Reinstall Keepsake.",
-  ytdlp_missing: "yt-dlp is missing or damaged. Reinstall Keepsake.",
+  ssl: "A secure connection to the site failed. Check your connection, your system clock, or any proxy or antivirus interfering.",
+  ffmpeg_missing: "Keepsake's media tools are missing, so merging and audio conversion won't work. Reinstall Keepsake.",
+  ytdlp_missing: "Keepsake's downloader is missing or damaged. Reinstall Keepsake.",
   js_runtime_missing: "Install Node.js (https://nodejs.org) so YouTube downloads work.",
-  no_formats: `No downloadable video was found on this page. If the video requires a login, ${COOKIE_HINT[0].toLowerCase()}${COOKIE_HINT.slice(1)}`,
+  no_formats: "No downloadable video was found on this page.",
+  no_space: "Your drive or phone is out of space. Free some space and try again.",
+  permission: "Keepsake can't write to this folder. Pick another folder in Settings.",
+  too_large: "This file is too large to save here. Choose a lower quality or another folder.",
+  mux_failed: "We couldn't combine the video and audio. Try again or pick another quality.",
+  empty: "This playlist is empty or private.",
+  spawn: "Keepsake's downloader couldn't start. Your antivirus may be blocking it. Reinstall Keepsake.",
   bad_folder: "Can't save to this folder. Choose another folder in Settings.",
   empty_url: "Paste a link first.",
   web_cors:
     "The browser preview can't read video links (the browser blocks cross-site requests). Use the Keepsake desktop or Android app.",
   cancelled: "Cancelled",
-  unknown: "Unknown error",
+  gallery_failed: "Couldn't add the file to your Gallery. The download was kept in Keepsake's own folder.",
+  gallery_permission:
+    "Keepsake needs storage permission to save to your Gallery. The download was kept in Keepsake's own folder.",
+  folder_grant_lost: "Keepsake lost access to your chosen folder. Pick the folder again in Settings.",
+  folder_source_missing: "The downloaded file went missing before it could be saved. Try again.",
+  folder_bad_uri: "The chosen folder isn't valid. Pick the folder again in Settings.",
+  folder_failed: "Couldn't save to your chosen folder. Pick another folder in Settings.",
+  unknown: "Something went wrong. Try again.",
 };

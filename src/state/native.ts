@@ -6,6 +6,9 @@
  * dialog:allow-open, opener:allow-open-path, opener:allow-reveal-item-in-dir.
  */
 import { isTauri } from "@tauri-apps/api/core";
+import { platform } from "../engine/platform";
+import { GALLERY_SAVE } from "../engine/android-gallery";
+import { notify } from "./toast";
 
 export const inTauri = (() => {
   try {
@@ -65,19 +68,78 @@ export async function pickFolder(current?: string): Promise<string | null> {
   }
 }
 
+export interface AndroidFolder {
+  key: "gallery" | "downloads" | "music" | "movies";
+  label: string;
+  path: string;
+}
+
+/**
+ * Folders Keepsake may save to on Android. The system folder picker returns a content://
+ * tree URI that the file APIs cannot write to, so Android users choose from these instead.
+ * Each path sits inside the fs scope in capabilities/mobile.json.
+ */
+export async function androidFolders(): Promise<AndroidFolder[]> {
+  if (!inTauri) return [];
+  // Empty path = Gallery (saveDir "" with no tree URI). Listed even if the path API fails.
+  const gallery: AndroidFolder = { key: "gallery", label: "Gallery", path: GALLERY_SAVE };
+  try {
+    const { downloadDir, audioDir, videoDir } = await import("@tauri-apps/api/path");
+    const [dl, music, movies] = await Promise.all([downloadDir(), audioDir(), videoDir()]);
+    return [
+      ...(platform() === "android" ? [gallery] : []),
+      { key: "downloads", label: "Downloads", path: dl },
+      { key: "music", label: "Music", path: music },
+      { key: "movies", label: "Movies", path: movies },
+    ];
+  } catch {
+    return platform() === "android" ? [gallery] : [];
+  }
+}
+
+/**
+ * Human-readable location for UI. Stored paths may be content:// URIs or SAF ids
+ * ("primary:Download/Keepsake/x.mp4"); never show or open from this, only display it.
+ */
+export function friendlyPath(stored: string): string {
+  let p = stored;
+  if (p.startsWith("content://")) {
+    try {
+      p = decodeURIComponent(p.split("/document/").pop() ?? p);
+    } catch {
+      return "Gallery";
+    }
+    if (p.startsWith("content://")) return "Gallery";
+  }
+  p = p.replace(/^file:\/\//, "").replace(/^\/storage\/emulated\/0\//, "");
+  return p.replace(/^[^/:\\]{2,}:(?=[^/\\])/, "");
+}
+
 export async function openFile(path: string): Promise<boolean> {
   if (!inTauri) return false;
   try {
-    const { openPath } = await import("@tauri-apps/plugin-opener");
-    await openPath(path);
+    if (platform() === "android" || path.startsWith("content://")) {
+      // Android needs a content:// URI; the keepsake-media plugin shares file paths through FileProvider
+      // and opens content:// URIs (Gallery items, chosen folder) directly. Never the opener.
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("plugin:keepsake-media|open_file", { path });
+    } else {
+      const { openPath } = await import("@tauri-apps/plugin-opener");
+      await openPath(path);
+    }
     return true;
-  } catch {
+  } catch (e) {
+    notify({
+      tone: "error",
+      title: "Couldn't open the file",
+      body: e instanceof Error ? e.message : typeof e === "string" ? e : undefined,
+    });
     return false;
   }
 }
 
 export async function revealFile(path: string): Promise<boolean> {
-  if (!inTauri) return false;
+  if (!inTauri || path.startsWith("content://")) return false;
   try {
     const { revealItemInDir } = await import("@tauri-apps/plugin-opener");
     await revealItemInDir(path);

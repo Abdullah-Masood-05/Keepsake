@@ -26,8 +26,12 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost blob: data:",
-      "devCsp": "default-src 'self'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost blob: data: ws: http://localhost:1420"
+      "assetProtocol": {
+        "enable": true,
+        "scope": []
+      },
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-eval'; worker-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: asset: http://asset.localhost; media-src 'self' blob: asset: http://asset.localhost; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost blob: data:; object-src 'none'; base-uri 'self'; form-action 'none'",
+      "devCsp": "default-src 'self'; script-src 'self' 'unsafe-eval'; worker-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: asset: http://asset.localhost; media-src 'self' blob: asset: http://asset.localhost; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost blob: data: ws: http://localhost:1420; object-src 'none'; base-uri 'self'; form-action 'none'"
     }
   },
   "bundle": {
@@ -35,6 +39,14 @@
     "category": "Utility",
     "shortDescription": "Video and audio downloader",
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
-    "externalBin": ["binaries/yt-dlp", "binaries/ffmpeg", "binaries/ffprobe"]
+    "externalBin": ["binaries/keepsake-yt-dlp", "binaries/keepsake-ffmpeg", "binaries/keepsake-qjs"],
+    "linux": {
+      "deb": {
+        "recommends": ["gstreamer1.0-plugins-base", "gstreamer1.0-plugins-good", "gstreamer1.0-plugins-bad", "gstreamer1.0-libav"]
+      },
+      "rpm": {
+        "recommends": ["gstreamer1-plugins-base", "gstreamer1-plugins-good", "gstreamer1-plugins-bad-free", "gstreamer1-plugin-libav"]
+      }
+    }
   }
 }
