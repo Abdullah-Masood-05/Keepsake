@@ -1,28 +1,40 @@
-import { AnimatePresence, LayoutGroup, MotionConfig, motion, useReducedMotion } from "motion/react";
-import { useCallback, useEffect, useState } from "react";
+import { exit as exitApp, onBackButtonPress } from "@tauri-apps/api/app";
+import type { PluginListener } from "@tauri-apps/api/core";
+import { AnimatePresence, LayoutGroup, MotionConfig, motion } from "motion/react";
+import { lazy, memo, startTransition, Suspense, useCallback, useEffect, useState } from "react";
 import { SupportedSitesDialog } from "./components/features/SupportedSitesDialog";
 import { Sidebar } from "./components/layout/Sidebar";
 import { Splash } from "./components/layout/Splash";
 import { TabBar } from "./components/layout/TabBar";
 import { Titlebar } from "./components/layout/Titlebar";
-import { Button } from "./components/ui/Button";
+import { Button, IconButton } from "./components/ui/Button";
+import { Dialog } from "./components/ui/Dialog";
 import { Fab } from "./components/ui/Fab";
 import { Toasts } from "./components/ui/Toasts";
+import { closeTopModal } from "./components/ui/useModal";
+import { openAppSettings, requestStoragePermission, storagePermissionStatus } from "./engine/android-storage";
+import { platform } from "./engine/platform";
+import { pageForKey } from "./components/layout/nav-items";
+import { PageActiveContext } from "./components/layout/page";
 import { AddLinkDialog } from "./pages/AddLink";
-import { DownloadsPage } from "./pages/Downloads";
-import { FavoritesPage } from "./pages/Favorites";
-import { HomePage } from "./pages/Home";
-import { LibraryPage } from "./pages/Library";
-import { SettingsPage } from "./pages/Settings";
-import { SourcesPage } from "./pages/Sources";
-import { cancelAll, clearFinished, useDownloads } from "./state/downloads";
+import { cancelAll, clearFinished, useHasFinished } from "./state/downloads";
 import { refreshBinaries, versionsLine } from "./state/engine";
 import { isMac } from "./state/format";
 import { useIsNarrowWindow, useIsPhone } from "./state/hooks";
 import { initLibrary } from "./state/library";
 import { showWindow } from "./state/native";
-import { emit, emitOn, navigate, openAddLink, PAGES, usePage, type Page } from "./state/nav";
-import { initSettings, toggleDarkLight, updateSettings, useSettings } from "./state/settings";
+import { emit, emitOn, navigate, navStore, openAddLink, PAGES, usePage, type Page } from "./state/nav";
+import { initSettings, settingsStore, toggleDarkLight, updateSettings, useSettings } from "./state/settings";
+import { notify } from "./state/toast";
+
+// Pages load on demand so the first paint only pulls the shell.
+const HomePage = lazy(() => import("./pages/Home").then((m) => ({ default: m.HomePage })));
+const DownloadsPage = lazy(() => import("./pages/Downloads").then((m) => ({ default: m.DownloadsPage })));
+const LibraryPage = lazy(() => import("./pages/Library").then((m) => ({ default: m.LibraryPage })));
+const EditorPage = lazy(() => import("./pages/Editor").then((m) => ({ default: m.EditorPage })));
+const FavoritesPage = lazy(() => import("./pages/Favorites").then((m) => ({ default: m.FavoritesPage })));
+const SourcesPage = lazy(() => import("./pages/Sources").then((m) => ({ default: m.SourcesPage })));
+const SettingsPage = lazy(() => import("./pages/Settings").then((m) => ({ default: m.SettingsPage })));
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -115,8 +127,8 @@ function Root() {
         )}
       </AnimatePresence>
       {boot.phase === "splash" && boot.error && (
-        <div className="fixed bottom-6 left-1/2 z-[61] -translate-x-1/2">
-          <Button variant="ghost" onClick={() => setBoot({ phase: "ready" })}>
+        <div className="fixed bottom-[max(1.5rem,env(safe-area-inset-bottom))] left-1/2 z-[61] -translate-x-1/2">
+          <Button variant="ghost" size="lg" onClick={() => setBoot({ phase: "ready" })}>
             Continue without downloads
           </Button>
         </div>
@@ -132,7 +144,75 @@ function Root() {
         </motion.div>
       )}
       {ready && <Toasts />}
+      {ready && <StoragePrompt />}
     </>
+  );
+}
+
+/**
+ * Android, once after the splash: explains why Keepsake wants storage access, then asks. Shown only while access is
+ * missing and the prompt has not been shown before (settings.storagePromptShown, set whatever the answer).
+ */
+function StoragePrompt() {
+  const [phase, setPhase] = useState<"closed" | "ask" | "denied">("closed");
+  const phone = useIsPhone();
+  useEffect(() => {
+    if (platform() !== "android" || settingsStore.get().storagePromptShown) return;
+    let alive = true;
+    void storagePermissionStatus().then(
+      (st) => {
+        if (!alive || st.granted) return;
+        updateSettings({ storagePromptShown: true });
+        setPhase(st.permanentlyDenied ? "denied" : "ask");
+      },
+      () => undefined,
+    );
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const close = () => setPhase("closed");
+  const allow = async () => {
+    try {
+      const r = await requestStoragePermission();
+      if (!r.granted && r.permanentlyDenied) return setPhase("denied");
+    } catch {
+      // the Settings page can retry
+    }
+    close();
+  };
+  const denied = phase === "denied";
+  return (
+    <Dialog
+      open={phase !== "closed"}
+      onClose={close}
+      phone
+      title={denied ? "Storage access is off" : "Allow storage access"}
+      description={
+        denied
+          ? "Turn on storage access for Keepsake in your phone's settings so it can save to Downloads and next to your originals."
+          : "Allow storage access so Keepsake can save to your Downloads folder and keep edits next to the originals."
+      }
+      footer={
+        <>
+          <Button variant="ghost" className={phone ? "h-11" : undefined} onClick={close}>
+            Not now
+          </Button>
+          <Button
+            variant="primary"
+            className={phone ? "h-11" : undefined}
+            onClick={() => {
+              if (denied) {
+                void openAppSettings().catch(() => undefined);
+                close();
+              } else void allow();
+            }}
+          >
+            {denied ? "Open settings" : "Allow"}
+          </Button>
+        </>
+      }
+    />
   );
 }
 
@@ -142,6 +222,91 @@ function isTypingTarget(el: Element | null): boolean {
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (el as HTMLElement).isContentEditable;
 }
 
+/**
+ * Close whatever floats over the page, top-most first, the way Esc would:
+ * an open dropdown list, then the top modal/sheet, then the FAB menu.
+ * Returns true when something was open (the back press is consumed).
+ */
+function closeOverlay(): boolean {
+  if (document.querySelector("[data-popover]")) {
+    // Dropdown closes on any pointerdown outside its button and list (document capture listener).
+    document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    return true;
+  }
+  if (closeTopModal()) return true;
+  if (document.querySelector("[data-fab][data-open]")) {
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    return true;
+  }
+  return false;
+}
+
+/** Window (ms) in which a second back press on Home exits. */
+const EXIT_WINDOW = 2000;
+
+/**
+ * Android hardware/gesture back. Registering a handler takes over the OS default, so:
+ * close the top overlay, else go Home, else on Home "Press back again to exit".
+ * For that 2 s window the listener is unregistered, so the second press reaches the OS
+ * default (which closes the app) without needing the core:app:allow-exit permission;
+ * exit(0) is only a backup for a press that lands before the unregister completes.
+ * Registered once for the Shell's lifetime; the current page is read from the store.
+ */
+function useAndroidBack() {
+  useEffect(() => {
+    if (platform() !== "android") return;
+    let disposed = false;
+    let listener: PluginListener | null = null;
+    let armedUntil = 0;
+    let rearm: ReturnType<typeof setTimeout> | undefined;
+
+    const register = () =>
+      onBackButtonPress(onBack).then(
+        (l) => {
+          if (disposed) void l.unregister().catch(() => {});
+          else listener = l;
+        },
+        () => {
+          // Not available (older runtime or permission): the OS default stays in place.
+        },
+      );
+
+    const onBack = () => {
+      if (closeOverlay()) return;
+      if (navStore.get() !== "home") {
+        navigate("home");
+        return;
+      }
+      const now = Date.now();
+      if (now < armedUntil) {
+        void exitApp(0).catch(() => {});
+        return;
+      }
+      armedUntil = now + EXIT_WINDOW;
+      notify({ tone: "info", title: "Press back again to exit", duration: EXIT_WINDOW });
+      const l = listener;
+      listener = null;
+      if (l) void l.unregister().catch(() => {});
+      clearTimeout(rearm);
+      rearm = setTimeout(() => {
+        armedUntil = 0;
+        if (!disposed && !listener) void register();
+      }, EXIT_WINDOW);
+    };
+
+    void register();
+    return () => {
+      disposed = true;
+      clearTimeout(rearm);
+      if (listener) void listener.unregister().catch(() => {});
+      listener = null;
+    };
+  }, []);
+}
+
+/** Pages that bind Mod+F to their own search field; the shell leaves Mod+F alone there. */
+const PAGES_WITH_OWN_SEARCH: ReadonlySet<Page> = new Set<Page>(["favorites"]);
+
 function Shell() {
   const page = usePage();
   const phone = useIsPhone();
@@ -149,11 +314,10 @@ function Shell() {
   const collapsedPref = useSettings((s) => s.sidebarCollapsed);
   const [overlay, setOverlay] = useState(false);
   const [sites, setSites] = useState(false);
-  const reduced = useReducedMotion();
-  const jobs = useDownloads();
-  const hasFinished = jobs.some((j) => j.status === "done" || j.status === "failed" || j.status === "cancelled");
+  const hasFinished = useHasFinished();
 
   const collapsed = narrowWindow || collapsedPref;
+  useAndroidBack();
 
   const toggleSidebar = useCallback(() => {
     if (narrowWindow) {
@@ -164,12 +328,15 @@ function Shell() {
     }
   }, [narrowWindow, collapsedPref]);
 
-  // Keyboard shortcuts (UI_CONTENT.md section 7). Mod+1..6 follow the sidebar order.
+  // Keyboard shortcuts (UI_CONTENT.md section 7). Mod+1..7 jump to pages (keys live in nav-items).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = isMac ? e.metaKey : e.ctrlKey;
       if (!mod || e.altKey) return;
       const k = e.key.toLowerCase();
+      // While typing, leave Mod+<key> to the field (paste, select-all, undo, ...).
+      // Only Mod+Enter (download from the Home paste field) passes through.
+      if (k !== "enter" && isTypingTarget(document.activeElement)) return;
       if (e.shiftKey) {
         if (k === "l") {
           e.preventDefault();
@@ -177,16 +344,19 @@ function Shell() {
         }
         return;
       }
+      const target = pageForKey(k);
       if (k === "b" && !phone) {
         e.preventDefault();
         toggleSidebar();
-      } else if (k >= "1" && k <= String(PAGES.length)) {
+      } else if (target) {
         e.preventDefault();
-        navigate(PAGES[Number(k) - 1]);
+        navigate(target);
       } else if (k === "l") {
         e.preventDefault();
         emitOn("home", "focus-paste");
       } else if (k === "f") {
+        // Pages with their own search (Favorites) handle Mod+F themselves.
+        if (PAGES_WITH_OWN_SEARCH.has(page)) return;
         e.preventDefault();
         emitOn("library", "focus-library-search");
       } else if (k === "enter") {
@@ -195,7 +365,7 @@ function Shell() {
           emit("download");
         }
       } else if (k === "v") {
-        if (page === "home" && !isTypingTarget(document.activeElement)) {
+        if (page === "home") {
           e.preventDefault();
           emit("paste-and-fetch");
         }
@@ -205,26 +375,59 @@ function Shell() {
     return () => window.removeEventListener("keydown", onKey);
   }, [page, phone, toggleSidebar]);
 
+  // Phone header actions are 44px tall (touch targets); desktop keeps the compact sm size.
   const action =
     page === "home" ? (
-      <Button size="sm" variant="ghost" icon="globe" onClick={() => setSites(true)}>
-        {phone ? "" : "Supported sites"}
-      </Button>
+      phone ? (
+        <IconButton icon="globe" label="Supported sites" size={44} onClick={() => setSites(true)} />
+      ) : (
+        <Button size="sm" variant="ghost" icon="globe" onClick={() => setSites(true)}>
+          Supported sites
+        </Button>
+      )
+    ) : page === "downloads" && phone ? (
+      <>
+        <IconButton icon="chevronLeft" label="Back to Home" size={44} onClick={() => navigate("home")} />
+        {hasFinished && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-11"
+            aria-label="Clear finished downloads"
+            title="Clear finished downloads"
+            onClick={clearFinished}
+          >
+            Clear
+          </Button>
+        )}
+      </>
     ) : page === "downloads" && hasFinished ? (
-      <Button size="sm" variant="ghost" onClick={clearFinished}>
-        Clear finished
+      <Button
+        size="sm"
+        variant="ghost"
+        className={phone ? "h-11" : ""}
+        aria-label="Clear finished downloads"
+        title="Clear finished downloads"
+        onClick={clearFinished}
+      >
+        {phone ? "Clear" : "Clear finished"}
       </Button>
     ) : page === "sources" && phone ? (
-      <Button size="sm" variant="ghost" icon="chevronLeft" onClick={() => navigate("home")}>
+      <Button size="sm" variant="ghost" icon="chevronLeft" className="h-11" onClick={() => navigate("home")}>
         Home
       </Button>
     ) : null;
 
+  // No FAB on Settings, nor on Editor where it would cover the timeline and export bar.
   const fab =
-    page === "settings" ? null : (
+    page === "settings" || page === "editor" ? null : (
       <Fab
         phone={phone}
-        className={phone ? "right-4 bottom-4" : "right-6 bottom-6"}
+        className={
+          phone
+            ? "right-[max(1rem,env(safe-area-inset-right))] bottom-4"
+            : "right-6 bottom-6"
+        }
         actions={[
           { label: "Paste and fetch", icon: "clipboard", onSelect: () => emitOn("home", "paste-and-fetch") },
           { label: "Add to Favorites", icon: "heart", onSelect: () => openAddLink("favorites") },
@@ -233,18 +436,47 @@ function Shell() {
       />
     );
 
+  const openSites = useCallback(() => setSites(true), []);
+  const [visited, setVisited] = useState<ReadonlySet<Page>>(() => new Set<Page>([navStore.get()]));
+  // Visiting a kept-alive page mounts it once; afterwards switching is just show/hide.
+  if (KEEP_ALIVE.has(page) && !visited.has(page)) setVisited(new Set(visited).add(page));
+
+  // Warm the heavy tabs while the phone is idle so the first tap is as cheap as the rest.
+  useEffect(() => {
+    const ric: (cb: () => void) => number =
+      typeof requestIdleCallback === "function"
+        ? (cb) => requestIdleCallback(cb, { timeout: 1500 })
+        : (cb) => window.setTimeout(cb, 300);
+    const cancel = typeof cancelIdleCallback === "function" ? cancelIdleCallback : clearTimeout;
+    let id = 0;
+    let i = 0;
+    const next = () => {
+      const p = WARM_ORDER[i++];
+      if (!p) return;
+      startTransition(() => setVisited((v) => (v.has(p) ? v : new Set(v).add(p))));
+      id = ric(next);
+    };
+    id = window.setTimeout(() => {
+      id = ric(next);
+    }, 1200);
+    return () => {
+      clearTimeout(id);
+      cancel(id);
+    };
+  }, []);
+
   const content = (
-    <AnimatePresence mode="wait" initial={false}>
-      <motion.div
-        key={page}
-        initial={reduced ? { opacity: 0 } : { opacity: 0, y: 6 }}
-        animate={{ opacity: 1, y: 0, transition: { duration: 0.18 } }}
-        exit={reduced ? { opacity: 0, transition: { duration: 0.12 } } : { opacity: 0, y: -4, transition: { duration: 0.12 } }}
-        className="mx-auto h-full w-full max-w-[1280px]"
-      >
-        <PageView page={page} phone={phone} onSupportedSites={() => setSites(true)} />
-      </motion.div>
-    </AnimatePresence>
+    <div className="mx-auto h-full w-full min-w-0 max-w-[1280px]">
+      {PAGES.map((p) =>
+        KEEP_ALIVE.has(p) ? (
+          visited.has(p) && (
+            <PageSlot key={p} page={p} active={p === page} phone={phone} onSupportedSites={openSites} />
+          )
+        ) : p === page ? (
+          <PageSlot key={p} page={p} active phone={phone} onSupportedSites={openSites} />
+        ) : null,
+      )}
+    </div>
   );
 
   return (
@@ -253,7 +485,10 @@ function Shell() {
         <div className="flex h-full min-w-0 flex-1 flex-col">
           <Titlebar compact action={action} />
           <div className="relative flex min-h-0 flex-1 flex-col">
-            <main className="scroll-y min-h-0 flex-1 px-4 pb-4">{content}</main>
+            {/* One gutter token: 16px (phone) plus the landscape safe-area insets. Pages add PAGE_BOTTOM. */}
+            <main className="scroll-y min-h-0 flex-1 overflow-x-hidden pr-[max(1rem,env(safe-area-inset-right))] pl-[max(1rem,env(safe-area-inset-left))]">
+              {content}
+            </main>
             {fab}
           </div>
           <TabBar />
@@ -271,7 +506,7 @@ function Shell() {
             <motion.div layout className="flex h-full min-w-0 flex-1 flex-col">
               <Titlebar action={action} />
               <div className="relative flex min-h-0 flex-1 flex-col">
-                <main className="scroll-y min-h-0 flex-1 px-6 pb-6">{content}</main>
+                <main className="scroll-y min-h-0 flex-1 overflow-x-hidden px-6">{content}</main>
                 {fab}
               </div>
             </motion.div>
@@ -284,6 +519,32 @@ function Shell() {
   );
 }
 
+/** Pages that stay mounted (hidden with display:none) once opened: switching is a style flip. */
+const KEEP_ALIVE: ReadonlySet<Page> = new Set<Page>(["home", "library", "favorites", "settings"]);
+const WARM_ORDER: Page[] = ["library", "favorites", "settings"];
+
+const PageSlot = memo(function PageSlot({
+  page,
+  active,
+  phone,
+  onSupportedSites,
+}: {
+  page: Page;
+  active: boolean;
+  phone: boolean;
+  onSupportedSites: () => void;
+}) {
+  return (
+    <div className={active ? "page-slot h-full" : "hidden"} aria-hidden={!active}>
+      <PageActiveContext.Provider value={active}>
+        <Suspense fallback={<div className="h-full" aria-busy="true" />}>
+          <PageView page={page} phone={phone} onSupportedSites={onSupportedSites} />
+        </Suspense>
+      </PageActiveContext.Provider>
+    </div>
+  );
+});
+
 function PageView({ page, phone, onSupportedSites }: { page: Page; phone: boolean; onSupportedSites: () => void }) {
   switch (page) {
     case "home":
@@ -292,6 +553,8 @@ function PageView({ page, phone, onSupportedSites }: { page: Page; phone: boolea
       return <DownloadsPage phone={phone} />;
     case "library":
       return <LibraryPage phone={phone} />;
+    case "editor":
+      return <EditorPage phone={phone} />;
     case "favorites":
       return <FavoritesPage phone={phone} />;
     case "sources":

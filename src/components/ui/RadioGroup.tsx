@@ -57,6 +57,13 @@ export function RadioGroup<T extends string>({
     } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
       e.preventDefault();
       move(i, -1);
+    } else if ((e.key === "Home" || e.key === "End") && enabled.length) {
+      e.preventDefault();
+      const j = e.key === "Home" ? enabled[0] : enabled[enabled.length - 1];
+      const o = options[j];
+      if (!o) return;
+      onChange(o.value);
+      refs.current[j]?.focus();
     }
   };
 
@@ -85,7 +92,7 @@ export function RadioGroup<T extends string>({
             whileHover={reduced || on ? undefined : { y: -2 }}
             whileTap={{ scale: 0.96 }}
             transition={t.press}
-            className={`glyph-host icon-host group relative flex min-w-0 flex-col items-start gap-2 border text-left transition-[border-color,background-color,box-shadow] duration-200 disabled:opacity-45 ${
+            className={`hit glyph-host icon-host group relative flex min-w-0 flex-col items-start gap-2 border text-left transition-[border-color,background-color,box-shadow] duration-200 disabled:opacity-45 ${
               compact ? "rounded-[14px_14px_14px_6px] p-2.5" : "rounded-[18px_18px_18px_7px] p-3"
             } ${
               on

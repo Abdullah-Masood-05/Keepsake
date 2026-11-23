@@ -182,6 +182,7 @@ function AddLinkForm({
             size={phone ? "lg" : "md"}
             className={phone ? "" : "h-10"}
             aria-label="Paste"
+            title="Paste"
             onClick={() =>
               void readClipboard().then((txt) => {
                 const v = txt.trim();
@@ -230,8 +231,8 @@ function AddLinkForm({
             >
               <Thumb src={info.thumbnails[0]?.url} className="aspect-video w-24 shrink-0 rounded-[10px_10px_10px_4px]" />
               <div className="min-w-0 flex-1">
-                <div className="line-clamp-2 text-[13px] font-semibold">{info.title}</div>
-                <div className="mt-1 flex items-center gap-1.5">
+                <div className="line-clamp-2 text-[13px] font-semibold [overflow-wrap:anywhere]">{info.title}</div>
+                <div className="mt-1 flex min-w-0 items-center gap-1.5">
                   <TagBadge>{categoryOf(site)}</TagBadge>
                   <span className="truncate text-[11px] text-fg-2">{info.channel ?? siteLabel(site)}</span>
                 </div>
@@ -239,7 +240,15 @@ function AddLinkForm({
             </motion.div>
           ) : (
             <motion.div key="lookup" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={t.fast}>
-              <Button type="submit" variant="secondary" icon="search" loading={looking} disabled={!valid}>
+              <Button
+                type="submit"
+                variant="secondary"
+                icon="search"
+                size={phone ? "lg" : "md"}
+                className={phone ? "w-full" : ""}
+                loading={looking}
+                disabled={!valid}
+              >
                 {looking ? "Looking up" : "Look up title and thumbnail"}
               </Button>
             </motion.div>

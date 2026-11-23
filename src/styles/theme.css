@@ -1,50 +1,63 @@
 @import "tailwindcss";
 @custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
 
-/* Tokens from UI_THEME_MOTION.md section 1. Dark is the default palette. */
-:root,
-[data-theme="dark"] {
-  --bg-app: #0b0908;
-  --bg-sidebar: #0f0e0d;
-  --bg-card: #151413;
-  --bg-card-hover: #1a1817;
-  --bg-inset: #1d1b1a;
-  --bg-card-tint: #3a1f1a;
-  --bg-card-tint-strong: #a94a37;
-  --border: #262322;
-  --border-strong: #3a3533;
-  --text-primary: #f2f0ef;
-  --text-secondary: #8f8a88;
-  --text-muted: #5e5957;
-  --accent: #e0634c;
-  --accent-hover: #ea735c;
-  --accent-active: #c8533e;
-  --accent-fg: #ffffff;
-  --accent-soft: rgba(224, 99, 76, 0.16);
-  --accent-border: rgba(224, 99, 76, 0.45);
-  --success: #4fbf8a;
-  --warning: #e8a94a;
-  --danger: #e5484d;
-  --focus-ring: #f08a75;
-  --chart-1: #e0634c;
-  --chart-2: #f09b86;
-  --chart-3: #883430;
-  --chart-4: #e3c3b9;
-  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 8px 24px rgba(0, 0, 0, 0.35);
-  --shadow-lift: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 14px 32px rgba(0, 0, 0, 0.5);
-  --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.6);
+/*
+ * Tokens from UI_THEME_MOTION.md section 1.
+ * :root carries the shared scale tokens (spacing, radius, type, touch, safe area)
+ * and the light palette. The dark palette applies when the OS prefers dark and the
+ * app has not forced light, or when the app sets data-theme="dark" (settings.ts
+ * always resolves "system" to an explicit data-theme, and index.html starts dark).
+ */
+:root {
+  /* Spacing scale (4px grid). Tailwind's own --spacing is untouched. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  /* Radii. The organic surfaces (.card, .shape-*) keep one tighter corner. */
+  --radius-xs: 6px;
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 18px;
+  --radius-xl: 24px;
   --radius-pill: 999px;
+  /* Type scale (prefixed --fs- so Tailwind's --text-* sizes are not overridden). */
+  --fs-2xs: 10px;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-base: 13px;
+  --fs-md: 14px;
+  --fs-lg: 15px;
+  --fs-xl: 16px;
+  --lh-tight: 16px;
+  --lh-base: 20px;
+  --lh-loose: 22px;
   --font-ui: system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", "Cantarell", "Ubuntu",
     "Noto Sans", "Helvetica Neue", Arial, sans-serif;
   --font-code: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, "DejaVu Sans Mono",
     monospace;
-  color-scheme: dark;
-}
+  /* Touch and layout. --touch-min is the phone hit-area floor (.hit, .touch-row). */
+  --touch-min: 44px;
+  --tabbar-h: 64px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  /* Motion. */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-slow: 280ms;
+  /* Chart ramp (same in both themes). */
+  --chart-1: #e0634c;
+  --chart-2: #f09b86;
+  --chart-3: #883430;
+  --chart-4: #e3c3b9;
 
-[data-theme="light"] {
+  /* Light palette (default when nothing selects dark). */
   --bg-app: #f6f6f7;
   --bg-sidebar: #eeedec;
   --bg-card: #ffffff;
@@ -73,6 +86,66 @@
   color-scheme: light;
 }
 
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg-app: #0b0908;
+    --bg-sidebar: #0f0e0d;
+    --bg-card: #151413;
+    --bg-card-hover: #1a1817;
+    --bg-inset: #1d1b1a;
+    --bg-card-tint: #3a1f1a;
+    --bg-card-tint-strong: #a94a37;
+    --border: #262322;
+    --border-strong: #3a3533;
+    --text-primary: #f2f0ef;
+    --text-secondary: #8f8a88;
+    --text-muted: #5e5957;
+    --accent: #e0634c;
+    --accent-hover: #ea735c;
+    --accent-active: #c8533e;
+    --accent-fg: #ffffff;
+    --accent-soft: rgba(224, 99, 76, 0.16);
+    --accent-border: rgba(224, 99, 76, 0.45);
+    --success: #4fbf8a;
+    --warning: #e8a94a;
+    --danger: #e5484d;
+    --focus-ring: #f08a75;
+    --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 8px 24px rgba(0, 0, 0, 0.35);
+    --shadow-lift: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 14px 32px rgba(0, 0, 0, 0.5);
+    --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.6);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg-app: #0b0908;
+  --bg-sidebar: #0f0e0d;
+  --bg-card: #151413;
+  --bg-card-hover: #1a1817;
+  --bg-inset: #1d1b1a;
+  --bg-card-tint: #3a1f1a;
+  --bg-card-tint-strong: #a94a37;
+  --border: #262322;
+  --border-strong: #3a3533;
+  --text-primary: #f2f0ef;
+  --text-secondary: #8f8a88;
+  --text-muted: #5e5957;
+  --accent: #e0634c;
+  --accent-hover: #ea735c;
+  --accent-active: #c8533e;
+  --accent-fg: #ffffff;
+  --accent-soft: rgba(224, 99, 76, 0.16);
+  --accent-border: rgba(224, 99, 76, 0.45);
+  --success: #4fbf8a;
+  --warning: #e8a94a;
+  --danger: #e5484d;
+  --focus-ring: #f08a75;
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-lift: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 14px 32px rgba(0, 0, 0, 0.5);
+  --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.6);
+  color-scheme: dark;
+}
+
 @theme inline {
   --color-app: var(--bg-app);
   --color-sidebar: var(--bg-sidebar);
@@ -91,6 +164,7 @@
   --color-accent-active: var(--accent-active);
   --color-on-accent: var(--accent-fg);
   --color-accent-soft: var(--accent-soft);
+  --color-accent-border: var(--accent-border);
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-danger: var(--danger);
@@ -110,9 +184,20 @@ body,
 #root {
   height: 100%;
 }
+/* Full-height containers follow the dynamic viewport (Android system bars, keyboard). */
+@supports (height: 100dvh) {
+  body,
+  #root {
+    height: 100dvh;
+  }
+}
 
 html {
   background: var(--bg-app);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  /* Android WebView: no grey flash on tap. */
+  -webkit-tap-highlight-color: transparent;
 }
 
 body {
@@ -120,22 +205,87 @@ body {
   background: var(--bg-app);
   color: var(--text-primary);
   font-family: var(--font-ui);
-  font-size: 13px;
-  line-height: 20px;
+  font-size: var(--fs-base);
+  line-height: var(--lh-base);
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
+  /* No pull-to-refresh / rubber-band on the page itself. */
+  overscroll-behavior: none;
+}
+
+/* Buttons and button-like controls never start a text selection on long-press. */
+button,
+[role="button"],
+[role="tab"],
+[role="radio"],
+[role="switch"],
+[role="option"],
+[role="combobox"],
+[role="menuitem"] {
   user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 input,
 textarea,
 .selectable {
   user-select: text;
+  -webkit-user-select: text;
 }
 
+/* One focus ring for every control; pointer focus stays quiet. */
 :focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
+}
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/*
+ * Touch targets. `.hit` adds an invisible, centered hit area of at least
+ * --touch-min on phones / coarse pointers without changing the visual size.
+ * In @layer components so a caller's `absolute` utility still wins.
+ */
+@layer components {
+  .hit {
+    position: relative;
+  }
+}
+@media (max-width: 759.98px), (pointer: coarse) {
+  .hit::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: max(100%, var(--touch-min));
+    height: max(100%, var(--touch-min));
+    transform: translate(-50%, -50%);
+  }
+  /* List rows (dropdown options) grow to the minimum outright. */
+  .touch-row {
+    min-height: var(--touch-min);
+  }
+}
+
+/* Modal panels (Dialog, Sheet, ActionModal): cap height; utilities may tighten it. */
+@layer components {
+  .modal-panel {
+    max-height: 85vh;
+    max-height: 85dvh;
+  }
+}
+[role="dialog"],
+[role="listbox"],
+.modal-panel {
+  overscroll-behavior: contain;
+}
+
+/* Phone toast stack: above the TabBar, the bottom safe-area inset and (when shown) the FAB
+   column, which also clears Home's pinned action bar. --fab-clear is set by Fab.tsx. */
+.toast-stack-phone {
+  bottom: calc(var(--tabbar-h) + var(--safe-bottom) + var(--space-3) + var(--fab-clear, 0px));
 }
 
 .tabular {
@@ -271,6 +421,25 @@ textarea,
   animation: shimmer 1.2s linear infinite;
   border-radius: var(--radius-sm);
 }
+/* Page switch: transform/opacity only, short. Kept-alive pages restart it when they unhide. */
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.page-slot {
+  animation: page-in 160ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .page-slot {
+    animation: none;
+  }
+}
 @keyframes shimmer {
   from {
     background-position: 200% 0;
@@ -294,8 +463,69 @@ textarea,
   animation: spin 0.7s linear infinite;
 }
 
+/* Loader.tsx: SVG spinner, sweep bar and skeleton shimmer. */
+@keyframes keepsake-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes keepsake-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(340%);
+  }
+}
+@keyframes keepsake-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+.ks-spin {
+  transform-origin: 50% 50%;
+  animation: keepsake-spin 0.85s linear infinite;
+}
+.ks-sweep {
+  animation: keepsake-sweep 1.2s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+.ks-shimmer {
+  background: linear-gradient(90deg, var(--bg-inset) 0%, var(--border) 50%, var(--bg-inset) 100%);
+  background-size: 200% 100%;
+  animation: keepsake-shimmer 1.4s linear infinite;
+}
+.ks-toast-in {
+  animation: keepsake-toast-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes keepsake-toast-in {
+  from {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .motion-safe-only {
+    animation: none !important;
+  }
+  /* Reduced motion: the spinner becomes a still dashed ring; the sweep parks as a static segment. */
+  .ks-spinner-arc {
+    stroke-dasharray: 3 4;
+  }
+  .ks-sweep {
+    transform: translateX(75%);
+  }
+}
+
 .scroll-y {
   overflow-y: auto;
+  overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: var(--border-strong) transparent;
 }
@@ -304,11 +534,16 @@ textarea,
   scrollbar-width: none;
 }
 
+/* Safe-area hooks (index.html sets viewport-fit=cover, so insets are real on Android). */
 .safe-bottom {
-  padding-bottom: env(safe-area-inset-bottom);
+  padding-bottom: var(--safe-bottom);
 }
 .safe-top {
-  padding-top: env(safe-area-inset-top);
+  padding-top: var(--safe-top);
+}
+.safe-x {
+  padding-left: var(--safe-left);
+  padding-right: var(--safe-right);
 }
 
 /*
@@ -318,9 +553,6 @@ textarea,
  * keyboard focus plays the same motion. Off entirely under reduced motion.
  * Part transforms use the 24px viewBox as their box, so origins are in icon units.
  */
-:root {
-  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
-}
 .icon-anim path {
   transform-box: view-box;
   transform-origin: 12px 12px;
@@ -547,9 +779,12 @@ textarea,
 }
 
 @media (prefers-reduced-motion: reduce) {
-  * {
+  *,
+  *::before,
+  *::after {
     transition-duration: 0ms !important;
     animation-duration: 0ms !important;
+    scroll-behavior: auto !important;
   }
 }
 

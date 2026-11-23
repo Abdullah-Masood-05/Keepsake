@@ -1,6 +1,7 @@
 [package]
 name = "keepsake"
 version = "2.1.0"
+license = "PolyForm-Noncommercial-1.0.0"
 edition = "2021"
 # tauri-plugin-http 2.8 and tauri-plugin-fs 2.7 declare rust-version 1.90.
 rust-version = "1.90"
@@ -13,13 +14,18 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.7", features = [] }
 
 [dependencies]
-tauri = { version = "2.12", features = [] }
+# protocol-asset: editor previews via convertFileSrc. The static asset scope is empty; plugin-dialog
+# grants each picked file at runtime (tauri::scope::Scopes::allow_file covers the asset scope).
+tauri = { version = "2.12", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2.8"
 tauri-plugin-opener = "2.7"
 # unsafe-headers: let the engine send Origin/Referer as youtube.com instead of the
 # webview origin (tauri://localhost / http://tauri.localhost), which the plugin appends otherwise.
 tauri-plugin-http = { version = "2.8", features = ["unsafe-headers"] }
 tauri-plugin-fs = "2.7"
+# Android-only audio transcoding (Kotlin, android.media.*). Compiled everywhere so the
+# capability check always finds its permissions; registered in lib.rs under cfg(mobile).
+tauri-plugin-keepsake-media = { path = "plugins/keepsake-media" }
 serde = { version = "1", features = ["derive"] }
 
 [profile.release]

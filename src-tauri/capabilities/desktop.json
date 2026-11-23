@@ -37,8 +37,7 @@
         { "url": "https://youtubei.googleapis.com" },
         { "url": "https://*.ytimg.com" },
         { "url": "https://*.ggpht.com" },
-        { "url": "https://*.googleusercontent.com" },
-        { "url": "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/*" }
+        { "url": "https://*.googleusercontent.com" }
       ]
     },
     "fs:default",
@@ -46,6 +45,9 @@
     "fs:allow-write",
     "fs:allow-write-file",
     "fs:allow-read-file",
+    "fs:allow-read",
+    "fs:allow-seek",
+    "fs:allow-fstat",
     "fs:allow-mkdir",
     "fs:allow-exists",
     "fs:allow-stat",

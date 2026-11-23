@@ -11,19 +11,78 @@
 //!   onEvent messages: { event: "stdout" | "stderr", line: string }
 //!   invoke<void>("cancel_ytdlp", { jobId })
 //!   invoke<{ ytdlp: string | null, ffmpeg: string | null, node: string | null }>("binary_status")
+//!     `node` is the version of the JS runtime run_ytdlp will use: the bundled QuickJS-NG
+//!     ("QuickJS..." text) when present, else Node.js ("v22.x"), else null.
+//!     Results are cached by path, size and mtime (memory + app cache dir), so a warm start spawns nothing.
 //!   invoke<string[]>("list_installed_browsers")  // yt-dlp browser names with a profile folder
-//!   run_ytdlp rejects with "js_runtime_missing: ..." for a YouTube URL when no Node.js is found.
+//!   run_ytdlp rejects with "js_runtime_missing: ..." for a YouTube URL when neither the bundled
+//!   QuickJS (sidecar "qjs") nor Node.js is found.
 #![cfg_attr(mobile, allow(dead_code, unused))]
 
 use serde::Serialize;
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, Mutex};
 use tauri::{ipc::Channel, AppHandle, Manager};
 
-/// Running jobs: job id -> process id.
+struct Job {
+    pid: u32,
+    temp_dir: Option<PathBuf>,
+    /// Set by cancel_ytdlp so the run keeps no temp folder after a cancel.
+    cancelled: Arc<AtomicBool>,
+}
+
+/// Error prefix the TS engine maps to codes: os error 28 (no space) or 13 (permission).
+fn io_prefix(e: &std::io::Error) -> &'static str {
+    match e.raw_os_error() {
+        Some(28) => "ytdlp:no_space: ",
+        Some(13) => "ytdlp:permission: ",
+        _ => "",
+    }
+}
+
+const STALE_TEMP_SECS: u64 = 7 * 24 * 60 * 60;
+
+/// True when a temp folder last touched `age` ago is old enough to sweep.
+fn is_stale_temp(age: std::time::Duration) -> bool {
+    age.as_secs() >= STALE_TEMP_SECS
+}
+
+/// `outDir` must be absolute with no `..` parts.
+fn validate_out_dir(d: &str) -> Result<PathBuf, String> {
+    let p = PathBuf::from(d);
+    if p.is_absolute()
+        && !p
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        Ok(p)
+    } else {
+        Err("outDir must be an absolute path".into())
+    }
+}
+
+/// Running jobs: job id -> process id and the job's own temp folder.
 #[derive(Default)]
-pub struct Jobs(Mutex<HashMap<String, u32>>);
+pub struct Jobs(Mutex<HashMap<String, Job>>);
+
+/// Size and modification time of a binary; a change means "probe the version again".
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FileKey {
+    len: u64,
+    mtime_ns: u128,
+}
+
+type VersionMap = HashMap<PathBuf, (FileKey, String)>;
+
+/// binary_status cache: binary path -> (size/mtime key, version line).
+/// `None` until loaded from the app cache dir on first use.
+#[derive(Default)]
+pub struct VersionCache(Mutex<Option<VersionMap>>);
+
+const VERSION_CACHE_FILE: &str = "binary-versions.tsv";
 
 #[derive(Clone, Serialize)]
 #[serde(tag = "event", rename_all = "camelCase")]
@@ -85,6 +144,8 @@ const FLAGS_NO_VALUE: &[&str] = &[
     "--no-cache-dir",
     "--list-extractors",
     "--no-color",
+    // TikTok/Instagram workaround ladder (src/engine/ytdlp.ts LADDER_STEPS).
+    "--force-ipv4",
 ];
 
 /// Flags the TypeScript side may pass that take exactly one value (the next argument).
@@ -96,8 +157,6 @@ const FLAGS_WITH_VALUE: &[&str] = &[
     "-S",
     "--format-sort",
     "--merge-output-format",
-    "--remux-video",
-    "--recode-video",
     "--audio-format",
     "--audio-quality",
     "-o",
@@ -122,10 +181,10 @@ const FLAGS_WITH_VALUE: &[&str] = &[
     "-N",
     "--concurrent-fragments",
     "--socket-timeout",
-    "--cookies",
     "--cookies-from-browser",
     "--extractor-args",
     "--proxy",
+    "--impersonate",
 ];
 
 fn validate_job_id(id: &str) -> Result<(), String> {
@@ -169,12 +228,25 @@ fn validate_args(args: &[String]) -> Result<(), String> {
             if a == "--js-runtimes" && !js_runtime_ok(v.as_str()) {
                 return Err("only --js-runtimes node or node:<absolute path> is allowed".into());
             }
+            if a == "--impersonate" && !impersonate_ok(v.as_str()) {
+                return Err("--impersonate needs a CLIENT[:OS] target name".into());
+            }
             i += 2;
         } else {
             return Err(format!("yt-dlp argument not allowed: {a}"));
         }
     }
     Ok(())
+}
+
+/// `--impersonate` value: a yt-dlp `CLIENT[:OS]` target such as `safari` or `chrome-131:android-14`.
+fn impersonate_ok(v: &str) -> bool {
+    !v.is_empty()
+        && v.len() <= 40
+        && !v.starts_with('-')
+        && v
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | ':' | '_'))
 }
 
 /// `--js-runtimes` value: `node` or `node:<absolute path>` (yt-dlp `RUNTIME[:PATH]`).
@@ -187,7 +259,68 @@ fn js_runtime_ok(v: &str) -> bool {
 
 /// Error text the TS engine maps to code `js_runtime_missing` (src/engine/ytdlp.ts).
 const JS_RUNTIME_MISSING: &str =
-    "js_runtime_missing: Node.js was not found. Install Node.js (https://nodejs.org) so YouTube downloads work.";
+    "js_runtime_missing: No JavaScript runtime was found (the bundled QuickJS is missing and Node.js is not installed). Reinstall Keepsake or install Node.js (https://nodejs.org) so YouTube downloads work.";
+
+/// JS runtime yt-dlp uses to solve YouTube's challenges.
+#[derive(Debug, PartialEq, Eq)]
+enum JsRuntime {
+    /// Bundled QuickJS-NG sidecar (`qjs`).
+    QuickJs(PathBuf),
+    /// User-installed Node.js (fallback).
+    Node(PathBuf),
+}
+
+impl JsRuntime {
+    /// `--js-runtimes` value in yt-dlp `RUNTIME:PATH` form.
+    fn yt_dlp_value(&self) -> OsString {
+        let (name, path) = match self {
+            JsRuntime::QuickJs(p) => ("quickjs:", p),
+            JsRuntime::Node(p) => ("node:", p),
+        };
+        let mut v = OsString::from(name);
+        v.push(path.as_os_str());
+        v
+    }
+}
+
+/// Prefer the bundled QuickJS; look for Node only when it is missing. Relative
+/// paths are never used (yt-dlp would resolve them against its own cwd).
+fn select_js_runtime(
+    bundled_qjs: Option<PathBuf>,
+    node: impl FnOnce() -> Option<PathBuf>,
+) -> Option<JsRuntime> {
+    bundled_qjs
+        .filter(|p| p.is_absolute())
+        .map(JsRuntime::QuickJs)
+        .or_else(|| node().filter(|p| p.is_absolute()).map(JsRuntime::Node))
+}
+
+/// The bundled `qjs` sidecar, resolved like yt-dlp (next to the app binary).
+fn bundled_qjs(sidecar_dir: &Path) -> Option<PathBuf> {
+    let p = sidecar_dir.join(exe_name("keepsake-qjs"));
+    p.is_file().then_some(p)
+}
+
+/// Value for `--ffmpeg-location`: the bundled ffmpeg FILE, never its folder. Given a folder, yt-dlp only looks
+/// for `ffmpeg`/`ffprobe` by those exact names, so `keepsake-ffmpeg.exe` was never found ("exe versions: none"):
+/// with `-i` yt-dlp then skipped the merge silently and moved the separate video-only and audio-only `.fNNN`
+/// files into the user's folder. Given a file whose name contains "ffmpeg", yt-dlp uses that file
+/// ("exe versions: ffmpeg 7.1.1"; checked with `-v` against the bundled yt-dlp 2026.08.19).
+fn ffmpeg_location(sidecar_dir: &Path) -> PathBuf {
+    sidecar_dir.join(exe_name("keepsake-ffmpeg"))
+}
+
+/// Error text the TS engine maps to code `ffmpeg_missing` (needs "ffmpeg" and "not found").
+const FFMPEG_MISSING: &str =
+    "ffmpeg not found: the bundled ffmpeg is missing, so video and audio cannot be merged. Reinstall Keepsake.";
+
+/// True when the job asks yt-dlp to merge or convert (it would otherwise skip that step silently under `-i`).
+fn needs_ffmpeg(args: &[String]) -> bool {
+    const FLAGS: [&str; 4] = ["--merge-output-format", "-x", "--embed-thumbnail", "--convert-thumbnails"];
+    args.iter()
+        .take_while(|a| *a != "--")
+        .any(|a| FLAGS.contains(&a.as_str()))
+}
 
 /// True when the URL after `--` is a YouTube host (yt-dlp needs a JS runtime for its challenges).
 fn is_youtube_job(args: &[String]) -> bool {
@@ -370,6 +503,19 @@ fn remove_dir_with_retries(dir: &Path) {
     }
 }
 
+/// Delete a job's `.keepsake-tmp/<jobId>` folder, then the `.keepsake-tmp`
+/// parent if it is now empty (`remove_dir` never removes a non-empty folder).
+/// The parent step runs under the job-table lock, the same lock new jobs hold
+/// while creating their folder, so it cannot delete a folder a new job needs.
+fn remove_job_temp(app: &AppHandle, dir: &Path) {
+    remove_dir_with_retries(dir);
+    let jobs = app.state::<Jobs>();
+    let _guard = jobs.0.lock();
+    if let Some(parent) = dir.parent() {
+        let _ = std::fs::remove_dir(parent);
+    }
+}
+
 #[cfg(desktop)]
 fn run_blocking(
     app: AppHandle,
@@ -381,7 +527,7 @@ fn run_blocking(
     use std::process::Stdio;
 
     let dir = sidecar_dir()?;
-    let ytdlp = dir.join(exe_name("yt-dlp"));
+    let ytdlp = dir.join(exe_name("keepsake-yt-dlp"));
     if !ytdlp.is_file() {
         return Err(format!("yt-dlp not found at {}", ytdlp.display()));
     }
@@ -389,30 +535,34 @@ fn run_blocking(
     let mut cmd = quiet_command(&ytdlp);
     cmd.args(["--ignore-config", "--no-plugin-dirs", "--no-js-runtimes"]);
     // yt-dlp needs a JS runtime to solve YouTube's challenges; without one YouTube
-    // answers with "Sign in to confirm you're not a bot". Pass Node by absolute path
-    // so a stale GUI PATH does not matter. Other sites run without a runtime.
-    match find_node() {
-        Some(node) => {
-            let mut v = std::ffi::OsString::from("node:");
-            v.push(node.as_os_str());
-            cmd.arg("--js-runtimes").arg(v);
+    // answers with "Sign in to confirm you're not a bot". Use the bundled QuickJS,
+    // else Node, by absolute path so a stale GUI PATH does not matter. Other sites
+    // run without a runtime.
+    match select_js_runtime(bundled_qjs(&dir), find_node) {
+        Some(rt) => {
+            cmd.arg("--js-runtimes").arg(rt.yt_dlp_value());
         }
         None if is_youtube_job(&args) => return Err(JS_RUNTIME_MISSING.into()),
         None => {}
     }
+    let ffmpeg = ffmpeg_location(&dir);
+    if needs_ffmpeg(&args) && !ffmpeg.is_file() {
+        return Err(FFMPEG_MISSING.into());
+    }
     cmd.arg("--ffmpeg-location")
-    .arg(&dir)
-    .args(&args)
-    .env("PYTHONIOENCODING", "utf-8")
-    .env("PYTHONUNBUFFERED", "1")
-    .stdout(Stdio::piped())
-    .stderr(Stdio::piped());
+        .arg(&ffmpeg)
+        .args(&args)
+        .env("PYTHONIOENCODING", "utf-8")
+        .env("PYTHONUNBUFFERED", "1")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
         cmd.process_group(0);
     }
 
+    let cancelled = Arc::new(AtomicBool::new(false));
     let mut child = {
         let jobs = app.state::<Jobs>();
         let mut map = jobs.0.lock().map_err(|_| "job table poisoned")?;
@@ -421,16 +571,28 @@ fn run_blocking(
         }
         if let Some(t) = &temp_dir {
             // Marker lets a startup sweep recognise folders Keepsake created.
-            std::fs::create_dir_all(t).map_err(|e| format!("cannot create temp folder: {e}"))?;
+            std::fs::create_dir_all(t)
+                .map_err(|e| format!("{}cannot create temp folder: {e}", io_prefix(&e)))?;
             let _ = std::fs::write(t.join(".keepsake-job"), &job_id);
         }
         let child = cmd.spawn().map_err(|e| {
             if let Some(t) = &temp_dir {
                 let _ = std::fs::remove_dir_all(t);
+                // Lock is held here, so this cannot race another job's folder creation.
+                if let Some(parent) = t.parent() {
+                    let _ = std::fs::remove_dir(parent);
+                }
             }
-            format!("could not start yt-dlp: {e}")
+            format!("{}could not start yt-dlp: {e}", io_prefix(&e))
         })?;
-        map.insert(job_id.clone(), child.id());
+        map.insert(
+            job_id.clone(),
+            Job {
+                pid: child.id(),
+                temp_dir: temp_dir.clone(),
+                cancelled: cancelled.clone(),
+            },
+        );
         child
     };
 
@@ -449,9 +611,14 @@ fn run_blocking(
     if let Ok(mut map) = app.state::<Jobs>().0.lock() {
         map.remove(&job_id);
     }
-    // The process tree is gone; only now delete this job's temp folder.
+    // The process tree is gone. Delete this job's temp folder (the .part files,
+    // fragments and intermediates of this job and no other) on success or cancel;
+    // keep it after a failed run so a retry can resume (swept after 7 days).
+    let ok = matches!(&status, Ok(s) if s.success());
     if let Some(t) = temp_dir {
-        remove_dir_with_retries(&t);
+        if ok || cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+            remove_job_temp(&app, &t);
+        }
     }
     let status = status.map_err(|e| e.to_string())?;
     Ok(status.code().unwrap_or(-1))
@@ -498,13 +665,50 @@ pub async fn cancel_ytdlp(app: AppHandle, job_id: String) -> Result<(), String> 
         .lock()
         .map_err(|_| "job table poisoned")?
         .get(&job_id)
-        .copied();
+        .map(|j| {
+            j.cancelled.store(true, std::sync::atomic::Ordering::SeqCst);
+            j.pid
+        });
     if let Some(pid) = pid {
         tauri::async_runtime::spawn_blocking(move || kill_tree(pid))
             .await
             .map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+/// Remove `<outDir>/.keepsake-tmp/*` folders that carry the `.keepsake-job`
+/// marker and were last modified over 7 days ago. Returns how many were removed.
+#[tauri::command]
+pub async fn sweep_stale_temp(out_dir: String) -> Result<u32, String> {
+    let base = validate_out_dir(&out_dir)?.join(".keepsake-tmp");
+    if cfg!(mobile) {
+        return Ok(0);
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let Ok(rd) = std::fs::read_dir(&base) else {
+            return 0;
+        };
+        let mut n = 0;
+        for e in rd.flatten() {
+            let p = e.path();
+            if !p.is_dir() || !p.join(".keepsake-job").is_file() {
+                continue;
+            }
+            let age = e
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.elapsed().ok());
+            if age.is_some_and(is_stale_temp) && std::fs::remove_dir_all(&p).is_ok() {
+                n += 1;
+            }
+        }
+        let _ = std::fs::remove_dir(&base); // only succeeds when empty
+        n
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 fn first_line(program: &Path, arg: &str) -> Option<String> {
@@ -523,9 +727,104 @@ fn first_line(program: &Path, arg: &str) -> Option<String> {
         .filter(|l| !l.is_empty())
 }
 
-/// Versions of the bundled sidecars and of `node` on PATH (null = missing or broken).
+/// QuickJS-NG may not know `--version`; any run that starts counts as working.
+fn qjs_version(program: &Path) -> Option<String> {
+    let out = quiet_command(program)
+        .arg("--version")
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    let line = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .next()
+        .map(|l| l.trim().to_string())
+        .unwrap_or_default();
+    if !line.is_empty() && (out.status.success() || line.to_ascii_lowercase().contains("quickjs")) {
+        Some(line)
+    } else {
+        Some("QuickJS-ng (bundled)".into())
+    }
+}
+
+fn file_key(p: &Path) -> Option<FileKey> {
+    let m = std::fs::metadata(p).ok()?;
+    if !m.is_file() {
+        return None;
+    }
+    let mtime_ns = m
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    Some(FileKey {
+        len: m.len(),
+        mtime_ns,
+    })
+}
+
+/// Version of `path`, probing only when its size/mtime differ from the cached entry.
+/// A missing file is `None` without probing. Failed probes are not cached.
+fn cached_version(
+    map: &mut VersionMap,
+    dirty: &mut bool,
+    path: &Path,
+    probe: impl FnOnce(&Path) -> Option<String>,
+) -> Option<String> {
+    let key = file_key(path)?;
+    if let Some((k, v)) = map.get(path) {
+        if *k == key {
+            return Some(v.clone());
+        }
+    }
+    let v = probe(path);
+    *dirty = true;
+    match &v {
+        Some(s) => {
+            map.insert(path.to_path_buf(), (key, s.clone()));
+        }
+        None => {
+            map.remove(path);
+        }
+    }
+    v
+}
+
+/// Cache file lines: `len \t mtime_ns \t version \t path` (path last, may hold tabs).
+fn parse_version_cache(text: &str) -> VersionMap {
+    text.lines()
+        .filter_map(|l| {
+            let mut f = l.splitn(4, '\t');
+            let len = f.next()?.parse().ok()?;
+            let mtime_ns = f.next()?.parse().ok()?;
+            let version = f.next()?;
+            let path = f.next()?;
+            (!version.is_empty() && !path.is_empty()).then(|| {
+                (
+                    PathBuf::from(path),
+                    (FileKey { len, mtime_ns }, version.to_string()),
+                )
+            })
+        })
+        .collect()
+}
+
+fn format_version_cache(map: &VersionMap) -> String {
+    let mut out = String::new();
+    for (p, (k, v)) in map {
+        let Some(ps) = p.to_str() else { continue };
+        if ps.contains(['\n', '\r']) || v.contains(['\t', '\n', '\r']) {
+            continue;
+        }
+        out.push_str(&format!("{}\t{}\t{}\t{}\n", k.len, k.mtime_ns, v, ps));
+    }
+    out
+}
+
+/// Versions of the bundled sidecars and of the JS runtime (null = missing or broken).
+/// Spawns `--version`/`-version` only when a binary's path, size or mtime changed.
 #[tauri::command]
-pub async fn binary_status() -> Result<BinaryVersions, String> {
+pub async fn binary_status(app: AppHandle) -> Result<BinaryVersions, String> {
     if cfg!(mobile) {
         return Ok(BinaryVersions {
             ytdlp: None,
@@ -533,12 +832,52 @@ pub async fn binary_status() -> Result<BinaryVersions, String> {
             node: None,
         });
     }
-    tauri::async_runtime::spawn_blocking(|| {
+    tauri::async_runtime::spawn_blocking(move || {
         let dir = sidecar_dir().unwrap_or_default();
+        let cache_file = app
+            .path()
+            .app_cache_dir()
+            .ok()
+            .map(|d| d.join(VERSION_CACHE_FILE));
+        let state = app.state::<VersionCache>();
+        // Held across the probes so two concurrent calls never spawn twice.
+        let mut guard = state.0.lock().unwrap_or_else(|e| e.into_inner());
+        let map = guard.get_or_insert_with(|| {
+            cache_file
+                .as_deref()
+                .and_then(|f| std::fs::read_to_string(f).ok())
+                .map(|t| parse_version_cache(&t))
+                .unwrap_or_default()
+        });
+        let mut dirty = false;
+        let ytdlp = cached_version(map, &mut dirty, &dir.join(exe_name("keepsake-yt-dlp")), |p| {
+            first_line(p, "--version")
+        });
+        let ffmpeg = cached_version(map, &mut dirty, &dir.join(exe_name("keepsake-ffmpeg")), |p| {
+            first_line(p, "-version")
+        });
+        let node = match select_js_runtime(bundled_qjs(&dir), find_node) {
+            Some(JsRuntime::QuickJs(p)) => cached_version(map, &mut dirty, &p, qjs_version),
+            Some(JsRuntime::Node(p)) => {
+                cached_version(map, &mut dirty, &p, |p| first_line(p, "--version"))
+            }
+            None => None,
+        };
+        if dirty {
+            if let Some(f) = &cache_file {
+                if let Some(parent) = f.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let tmp = f.with_extension("tsv.tmp");
+                if std::fs::write(&tmp, format_version_cache(map)).is_ok() {
+                    let _ = std::fs::rename(&tmp, f);
+                }
+            }
+        }
         BinaryVersions {
-            ytdlp: first_line(&dir.join(exe_name("yt-dlp")), "--version"),
-            ffmpeg: first_line(&dir.join(exe_name("ffmpeg")), "-version"),
-            node: find_node().and_then(|p| first_line(&p, "--version")),
+            ytdlp,
+            ffmpeg,
+            node,
         }
     })
     .await
@@ -564,14 +903,18 @@ pub async fn list_installed_browsers() -> Result<Vec<String>, String> {
     .map_err(|e| e.to_string())
 }
 
-/// Called on app exit: kill every running yt-dlp tree.
+/// Called on app exit: kill every running yt-dlp tree, then delete each job's
+/// temp folder (the run threads may not get to it before the process exits).
 pub fn kill_all(app: &AppHandle) {
-    let pids: Vec<u32> = match app.state::<Jobs>().0.lock() {
-        Ok(map) => map.values().copied().collect(),
+    let jobs: Vec<(u32, Option<PathBuf>)> = match app.state::<Jobs>().0.lock() {
+        Ok(map) => map.values().map(|j| (j.pid, j.temp_dir.clone())).collect(),
         Err(_) => return,
     };
-    for pid in pids {
-        kill_tree(pid);
+    for (pid, _) in &jobs {
+        kill_tree(*pid);
+    }
+    for t in jobs.iter().filter_map(|(_, t)| t.as_deref()) {
+        remove_job_temp(app, t);
     }
 }
 
@@ -658,6 +1001,216 @@ mod tests {
         assert!(temp_dir_for_job(&good, "job2").is_none());
         assert!(temp_dir_for_job(base, "job1").is_none());
         assert!(temp_dir_for_job(".keepsake-tmp/job1", "job1").is_none());
+    }
+
+    #[test]
+    fn ffmpeg_location_is_the_file_not_the_folder() {
+        let dir = std::env::temp_dir();
+        let p = ffmpeg_location(&dir);
+        assert_eq!(p.parent(), Some(dir.as_path()));
+        let name = p.file_name().unwrap().to_string_lossy().into_owned();
+        // yt-dlp maps a file to the `ffmpeg` program only when its name contains "ffmpeg".
+        assert!(name.contains("ffmpeg") && !name.contains("ffprobe"));
+        assert_eq!(name, exe_name("keepsake-ffmpeg"));
+    }
+
+    #[test]
+    fn merge_and_convert_jobs_need_ffmpeg() {
+        assert!(needs_ffmpeg(&s(&["-f", "137+bestaudio", "--merge-output-format", "mp4/mkv", "--", "u"])));
+        assert!(needs_ffmpeg(&s(&["-f", "bestaudio", "-x", "--audio-format", "mp3", "--", "u"])));
+        assert!(!needs_ffmpeg(&s(&["-J", "--flat-playlist", "--", "https://x/-x"])));
+        assert!(!needs_ffmpeg(&s(&["--skip-download", "--write-thumbnail", "--", "--merge-output-format"])));
+    }
+
+    #[test]
+    fn dead_and_dangerous_flags_rejected() {
+        for f in [
+            "--remux-video",
+            "--recode-video",
+            "--exec",
+            "--exec-before-download",
+            "--ffmpeg-location",
+            "--plugin-dirs",
+            "--config-locations",
+            "--batch-file",
+            "-a",
+            "--postprocessor-args",
+            "--ppa",
+            "--load-info-json",
+            "--use-postprocessor",
+            "--js-runtimes=node",
+        ] {
+            assert!(validate_args(&s(&[f, "x"])).is_err(), "{f} must be rejected");
+        }
+        // A disallowed flag cannot hide as the value of an allowed one and then reappear.
+        assert!(validate_args(&s(&["-f", "best", "--exec", "calc"])).is_err());
+        // The bundled runtime is Rust-only; TS may not pass quickjs itself.
+        assert!(validate_args(&s(&["--js-runtimes", "quickjs"])).is_err());
+        assert!(validate_args(&s(&["--js-runtimes", "quickjs:/opt/qjs"])).is_err());
+    }
+
+    #[test]
+    fn allows_download_args() {
+        let a = s(&[
+            "--encoding",
+            "utf-8",
+            "--no-warnings",
+            "--cookies-from-browser",
+            "edge",
+            "-f",
+            "bestaudio[ext=m4a]/bestaudio",
+            "-x",
+            "--audio-format",
+            "m4a",
+            "--merge-output-format",
+            "mp4",
+            "--embed-metadata",
+            "--newline",
+            "--progress",
+            "--progress-template",
+            "download:KEEPSAKE|x",
+            "--print",
+            "after_move:KEEPSAKE_DONE|%(filepath)s",
+            "-i",
+            "--",
+            "https://youtu.be/abc",
+        ]);
+        assert!(validate_args(&a).is_ok());
+    }
+
+    fn abs(name: &str) -> PathBuf {
+        if cfg!(windows) {
+            PathBuf::from(format!(r"C:\app\{name}.exe"))
+        } else {
+            PathBuf::from(format!("/opt/app/{name}"))
+        }
+    }
+
+    #[test]
+    fn runtime_prefers_bundled_qjs() {
+        let mut node_called = false;
+        let rt = select_js_runtime(Some(abs("qjs")), || {
+            node_called = true;
+            Some(abs("node"))
+        });
+        assert_eq!(rt, Some(JsRuntime::QuickJs(abs("qjs"))));
+        assert!(!node_called, "node lookup must be skipped when qjs is bundled");
+        let mut want = OsString::from("quickjs:");
+        want.push(abs("qjs").as_os_str());
+        assert_eq!(rt.unwrap().yt_dlp_value(), want);
+    }
+
+    #[test]
+    fn runtime_falls_back_to_node() {
+        let rt = select_js_runtime(None, || Some(abs("node")));
+        assert_eq!(rt, Some(JsRuntime::Node(abs("node"))));
+        let mut want = OsString::from("node:");
+        want.push(abs("node").as_os_str());
+        assert_eq!(rt.unwrap().yt_dlp_value(), want);
+    }
+
+    #[test]
+    fn runtime_none_or_relative() {
+        assert_eq!(select_js_runtime(None, || None), None);
+        // Relative paths are ignored for both runtimes.
+        assert_eq!(
+            select_js_runtime(Some(PathBuf::from("qjs")), || Some(abs("node"))),
+            Some(JsRuntime::Node(abs("node")))
+        );
+        assert_eq!(
+            select_js_runtime(None, || Some(PathBuf::from("node"))),
+            None
+        );
+    }
+
+    #[test]
+    fn version_cache_roundtrip() {
+        let mut m: VersionMap = HashMap::new();
+        m.insert(
+            abs("yt-dlp"),
+            (
+                FileKey {
+                    len: 18_000_000,
+                    mtime_ns: 1_760_000_000_123_456_789,
+                },
+                "2026.08.19".into(),
+            ),
+        );
+        // Entries that would break the line format are dropped, not written.
+        m.insert(
+            abs("bad"),
+            (FileKey { len: 1, mtime_ns: 2 }, "a\tb".into()),
+        );
+        let text = format_version_cache(&m);
+        let back = parse_version_cache(&text);
+        assert_eq!(back.len(), 1);
+        assert_eq!(back.get(&abs("yt-dlp")), m.get(&abs("yt-dlp")));
+        // Garbage lines are ignored.
+        assert!(parse_version_cache("x\ty\tz\tw\n\n1\t2\t\t/p\n").is_empty());
+    }
+
+    #[test]
+    fn allows_resilience_flags() {
+        let a = s(&[
+            "--no-playlist",
+            "--retries",
+            "5",
+            "--fragment-retries",
+            "5",
+            "--socket-timeout",
+            "30",
+            "--concurrent-fragments",
+            "4",
+            "--",
+            "https://example.com/v",
+        ]);
+        assert!(validate_args(&a).is_ok());
+        assert!(validate_args(&s(&["--retries"])).is_err());
+        assert!(validate_args(&s(&["--cookies", "c.txt"])).is_err());
+        assert!(validate_args(&s(&["--no-playlist", "--exec", "x"])).is_err());
+    }
+
+    #[test]
+    fn allows_ladder_flags() {
+        let a = s(&[
+            "-J",
+            "--extractor-args",
+            "tiktok:api_hostname=api22-normal-c-alisg.tiktokv.com;app_info=7351144126450059040",
+            "--force-ipv4",
+            "--impersonate",
+            "safari",
+            "--",
+            "https://www.tiktok.com/@a/video/1",
+        ]);
+        assert!(validate_args(&a).is_ok());
+        assert!(validate_args(&s(&["--impersonate", "chrome-131:android-14"])).is_ok());
+        assert!(validate_args(&s(&["--impersonate"])).is_err());
+        assert!(validate_args(&s(&["--impersonate", ""])).is_err());
+        assert!(validate_args(&s(&["--impersonate", "--exec"])).is_err());
+        assert!(validate_args(&s(&["--impersonate", "a b"])).is_err());
+        assert!(validate_args(&s(&["--impersonate", "x/../y"])).is_err());
+    }
+
+    #[test]
+    fn stale_age() {
+        use std::time::Duration;
+        assert!(!is_stale_temp(Duration::from_secs(STALE_TEMP_SECS - 1)));
+        assert!(is_stale_temp(Duration::from_secs(STALE_TEMP_SECS)));
+    }
+
+    #[test]
+    fn out_dir_rule() {
+        let good = if cfg!(windows) { r"C:\Users\u\Downloads" } else { "/home/u/d" };
+        assert!(validate_out_dir(good).is_ok());
+        assert!(validate_out_dir("relative/dir").is_err());
+        assert!(validate_out_dir(&format!("{good}{}..", std::path::MAIN_SEPARATOR)).is_err());
+    }
+
+    #[test]
+    fn io_error_prefixes() {
+        assert_eq!(io_prefix(&std::io::Error::from_raw_os_error(28)), "ytdlp:no_space: ");
+        assert_eq!(io_prefix(&std::io::Error::from_raw_os_error(13)), "ytdlp:permission: ");
+        assert_eq!(io_prefix(&std::io::Error::from_raw_os_error(2)), "");
     }
 
     #[test]

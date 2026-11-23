@@ -1,6 +1,6 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useMemo, useState } from "react";
-import { DownloadRow } from "../components/features/DownloadRow";
+import { DownloadCard } from "../components/features/DownloadCard";
 import { Button } from "../components/ui/Button";
 import { EmptyState } from "../components/ui/EmptyState";
 import { Segmented } from "../components/ui/Segmented";
@@ -9,10 +9,11 @@ import { useDownloads } from "../state/downloads";
 import { getPlatform } from "../state/engine";
 import { isActive } from "../state/models";
 import { navigate } from "../state/nav";
+import { PAGE_STACK } from "../components/layout/page";
 
 type Filter = "all" | "active" | "done" | "failed";
 
-/** Only the first N rows animate; long lists render plainly to stay cheap. */
+/** Only the first N cards animate; long lists render plainly to stay cheap. */
 const ANIMATE_LIMIT = 200;
 
 export function DownloadsPage({ phone }: { phone: boolean }) {
@@ -37,11 +38,11 @@ export function DownloadsPage({ phone }: { phone: boolean }) {
   if (jobs.length === 0) {
     return (
       <EmptyState
-        icon="download"
+        illustration="downloads"
         title="No downloads yet"
-        body="Fetch a link, pick a format and press Download. Progress shows up here."
+        body="Paste a link on Home, pick a format and press Download. Progress shows up here."
         action={
-          <Button variant="primary" icon="home" onClick={() => navigate("home")}>
+          <Button variant="primary" size={phone ? "lg" : "md"} icon="home" onClick={() => navigate("home")}>
             Go to Home
           </Button>
         }
@@ -57,7 +58,7 @@ export function DownloadsPage({ phone }: { phone: boolean }) {
   };
 
   return (
-    <div className="flex flex-col gap-4 pb-20">
+    <div className={PAGE_STACK}>
       <div className={phone ? "no-scrollbar -mx-4 overflow-x-auto px-4" : ""}>
         <Segmented<Filter>
           label="Filter downloads"
@@ -71,33 +72,29 @@ export function DownloadsPage({ phone }: { phone: boolean }) {
           ]}
         />
       </div>
-      <section className="card shape-drop flex min-w-0 flex-col px-4 py-1">
+      {/* Every download is its own animated card; cards enter, leave and reorder with the shared list motion. */}
+      <section aria-label="Downloads" className={`grid min-w-0 grid-cols-1 ${phone ? "gap-3" : "gap-4 2xl:grid-cols-2"}`}>
         {shown.length === 0 ? (
           <motion.p
             key={filter}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={t.base}
-            className="py-8 text-center text-fg-2"
+            className="card shape-drop py-8 text-center text-fg-2"
           >
             Nothing here
           </motion.p>
         ) : shown.length > ANIMATE_LIMIT ? (
           shown.map((j) => (
-            <div key={j.id} className="border-b border-line last:border-b-0">
-              <DownloadRow job={j} phone={phone} canReveal={canReveal} />
+            <div key={j.id} className="min-w-0">
+              <DownloadCard job={j} phone={phone} canReveal={canReveal} />
             </div>
           ))
         ) : (
           <AnimatePresence>
             {shown.map((j, i) => (
-              <motion.div
-                key={j.id}
-                layout={!reduced}
-                {...listItem(reduced, i)}
-                className="min-w-0 border-b border-line last:border-b-0"
-              >
-                <DownloadRow job={j} phone={phone} canReveal={canReveal} />
+              <motion.div key={j.id} layout={!reduced} {...listItem(reduced, i)} className="min-w-0">
+                <DownloadCard job={j} phone={phone} canReveal={canReveal} />
               </motion.div>
             ))}
           </AnimatePresence>

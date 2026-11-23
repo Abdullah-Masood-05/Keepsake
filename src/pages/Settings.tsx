@@ -1,5 +1,5 @@
 import { useReducedMotion } from "motion/react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Badge, Dot } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card, type Span } from "../components/ui/Card";
@@ -11,22 +11,36 @@ import { Collapsible } from "../components/ui/Collapsible";
 import { RadioGroup } from "../components/ui/RadioGroup";
 import { Switch } from "../components/ui/Switch";
 import { getPlatform, healthOf, refreshBinaries, useBinaries, versionsLine } from "../state/engine";
+import { collectDiagnostics } from "../engine/diagnostics";
+import { androidYtdlpStatus, type YtdlpStatus } from "../engine/android-ytdlp";
+import { pickAndroidFolder } from "../engine/android-folder";
+import { DOWNLOADS_SAVE, GALLERY_SAVE } from "../engine/android-gallery";
+import { openAppSettings, requestStoragePermission, storagePermissionStatus } from "../engine/android-storage";
 import { useWidth } from "../state/hooks";
-import { openFile, pickFolder } from "../state/native";
+import { notify } from "../state/toast";
+import { PAGE_BOTTOM } from "../components/layout/page";
+import { copyText, openFile, pickFolder } from "../state/native";
 import {
   clampParallel,
   COOKIE_BROWSERS,
   resetSettings,
   updateSettings,
   useSettings,
+  type EditSaveTarget,
   type ThemePref,
 } from "../state/settings";
 
 const SPANS: Record<string, Span> = {
   downloads: { wide: [6, 4], narrow: [12, 4] },
+  storage: { wide: [12, 3], narrow: [12, 4] },
   appearance: { wide: [6, 2], narrow: [12, 3] },
   tools: { wide: [6, 2], narrow: [12, 2] },
   reset: { wide: [12, 1], narrow: [12, 1] },
+};
+
+const copyDiagnostics = async () => {
+  await copyText(await collectDiagnostics());
+  notify({ tone: "success", title: "Diagnostics copied", body: "Paste them into your bug report." });
 };
 
 export function SettingsPage({ phone, onSupportedSites }: { phone: boolean; onSupportedSites: () => void }) {
@@ -36,36 +50,116 @@ export function SettingsPage({ phone, onSupportedSites }: { phone: boolean; onSu
   const platform = getPlatform();
   const desktop = platform === "windows" || platform === "linux";
   const [confirmReset, setConfirmReset] = useState(false);
+  const [storage, setStorage] = useState<{ granted: boolean; permanentlyDenied: boolean } | null | undefined>(undefined);
+  useEffect(() => {
+    if (platform !== "android") return;
+    let alive = true;
+    const check = () =>
+      void storagePermissionStatus().then(
+        (st) => alive && setStorage((prev) => ({ granted: st.granted, permanentlyDenied: st.permanentlyDenied || (!st.granted && !!prev?.permanentlyDenied) })),
+        () => alive && setStorage(null),
+      );
+    check();
+    // Back from the system settings screen: re-read the status.
+    window.addEventListener("focus", check);
+    return () => {
+      alive = false;
+      window.removeEventListener("focus", check);
+    };
+  }, [platform]);
+  const grantStorage = async () => {
+    if (storage?.permanentlyDenied) {
+      await openAppSettings().catch(() => undefined);
+      return;
+    }
+    try {
+      const r = await requestStoragePermission();
+      setStorage({ granted: r.granted, permanentlyDenied: r.permanentlyDenied });
+    } catch (e) {
+      notify({ tone: "error", title: "Couldn't ask for storage access", body: e instanceof Error ? e.message : String(e) });
+    }
+  };
+  const chooseFolder = async (current: string, apply: (uri: string, name: string) => void) => {
+    try {
+      const r = (await pickAndroidFolder(current || undefined)) as { uri?: string | null; name?: string | null } | null;
+      if (r?.uri) apply(r.uri, r.name ?? "");
+    } catch (e) {
+      notify({ tone: "error", title: "Couldn't choose folder", body: e instanceof Error ? e.message : String(e) });
+    }
+  };
+  const [ytdlp, setYtdlp] = useState<YtdlpStatus | null | undefined>(undefined);
+  useEffect(() => {
+    if (platform !== "android") return;
+    let alive = true;
+    void androidYtdlpStatus().then((st) => {
+      if (alive) setYtdlp(st);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [platform]);
+  const recheckYtdlp = () => {
+    setYtdlp(undefined);
+    void androidYtdlpStatus({ refresh: true }).then(setYtdlp);
+  };
   const reduced = useReducedMotion();
   const ref = useRef<HTMLDivElement>(null);
   const width = useWidth(ref);
   const narrow = phone || (width > 0 && width < 760);
+  const cardPad = phone ? "!p-4" : "";
+
+  const btn = phone ? "h-11 shrink-0" : "shrink-0";
+  const dlTarget: "downloads" | "gallery" | "folder" | "other" = s.saveTreeUri
+    ? "folder"
+    : s.saveDir === GALLERY_SAVE
+      ? "gallery"
+      : s.saveDir === DOWNLOADS_SAVE
+        ? "downloads"
+        : "other";
+  const dlLabel =
+    dlTarget === "folder"
+      ? s.saveTreeName || "Chosen folder"
+      : dlTarget === "gallery"
+        ? "Gallery"
+        : dlTarget === "downloads"
+          ? "Download/Keepsake"
+          : s.saveDir || "Keepsake's private folder";
+  const editLabel: Record<EditSaveTarget, string> = {
+    source: "Same folder as the original",
+    downloads: "Download/Keepsake",
+    gallery: "Gallery",
+    folder: s.editTreeName || "Chosen folder",
+  };
+  const saveLabel = platform === "android" ? dlLabel : s.saveDir || "System Downloads";
 
   const downloads = (
     <>
-      <FieldRow label="Save folder" hint={platform === "android" ? "Files are saved to the app's files folder." : undefined}>
-        <span
-          className="selectable max-w-[140px] min-w-0 truncate font-mono text-[11px] text-fg-2 sm:max-w-[220px]"
-          title={s.saveDir || "System Downloads folder"}
-        >
-          {s.saveDir || "System Downloads"}
-        </span>
-        <Button
-          size="sm"
-          icon="folder"
-          onClick={async () => {
-            const dir = await pickFolder(s.saveDir);
-            if (dir) updateSettings({ saveDir: dir });
-          }}
-        >
-          Change...
-        </Button>
-        {desktop && s.saveDir && (
-          <Button size="sm" variant="ghost" icon="open" onClick={() => void openFile(s.saveDir)}>
-            Open
+      {platform !== "android" && (
+        <FieldRow label="Save folder">
+          <span
+            className="selectable max-w-[min(220px,36vw)] min-w-0 truncate font-mono text-[11px] text-fg-2"
+            title={saveLabel}
+          >
+            {saveLabel}
+          </span>
+          <Button
+            size="sm"
+            icon="folder"
+            className={btn}
+            onClick={async () => {
+              const dir = await pickFolder(s.saveDir);
+              if (dir) updateSettings({ saveDir: dir });
+            }}
+          >
+            Change...
           </Button>
-        )}
-      </FieldRow>
+          {desktop && s.saveDir && (
+            <Button size="sm" variant="ghost" icon="open" onClick={() => void openFile(s.saveDir)}>
+              Open
+            </Button>
+          )}
+        </FieldRow>
+      )}
       <FieldRow label="Parallel downloads" hint="Choose a number from 1 to 10.">
         <Stepper
           label="Parallel downloads"
@@ -75,14 +169,24 @@ export function SettingsPage({ phone, onSupportedSites }: { phone: boolean; onSu
           onChange={(v) => updateSettings({ parallelDownloads: clampParallel(v) })}
         />
       </FieldRow>
-      <FieldRow label="Embed thumbnail as cover art">
+      <FieldRow label="Embed cover art in audio">
         <Switch
-          label="Embed thumbnail as cover art"
-          title="Adds cover art to the file"
+          label="Embed cover art in audio"
+          title="Adds cover art to MP3 and M4A files"
           checked={s.embedThumbnail}
           onChange={(v) => updateSettings({ embedThumbnail: v })}
         />
       </FieldRow>
+      {desktop && (
+        <FieldRow label="Embed thumbnail and metadata in videos" hint="Slower: rewrites the whole video file">
+          <Switch
+            label="Embed thumbnail and metadata in videos"
+            title="Adds cover art and tags to video files"
+            checked={s.embedVideoMeta}
+            onChange={(v) => updateSettings({ embedVideoMeta: v })}
+          />
+        </FieldRow>
+      )}
       <div className="pt-1">
         <Collapsible title="Advanced" subtitle="Sign-in cookies, codecs and clipboard" icon="bolt">
           {desktop && (
@@ -90,7 +194,7 @@ export function SettingsPage({ phone, onSupportedSites }: { phone: boolean; onSu
               <Select
                 label="Cookies from browser"
                 title="Use your browser's sign-in for private or members-only content"
-                className="w-[180px] sm:w-[200px]"
+                className="w-[200px] max-w-full"
                 value={s.cookiesBrowser}
                 onChange={(v) => updateSettings({ cookiesBrowser: v })}
                 options={COOKIE_BROWSERS}
@@ -117,6 +221,55 @@ export function SettingsPage({ phone, onSupportedSites }: { phone: boolean; onSu
     </>
   );
 
+  const choice = (active: boolean, label: string, onClick: () => void, icon?: "folder") => (
+    <Button size="sm" icon={icon} variant={active ? "primary" : "ghost"} className={btn} aria-pressed={active} onClick={onClick}>
+      {label}
+    </Button>
+  );
+  const storageCard = (
+    <>
+      <FieldRow
+        label="Storage access"
+        hint={
+          storage?.granted
+            ? "Keepsake can save to your Downloads folder and next to your originals."
+            : "Allow it so Keepsake can save to Downloads and keep edits next to the originals."
+        }
+      >
+        {storage === undefined ? (
+          <Skeleton className="h-6 w-20 rounded-md" />
+        ) : storage?.granted ? (
+          <Badge tone="success">
+            <Dot tone="success" /> Allowed
+          </Badge>
+        ) : (
+          <>
+            <Badge tone="warning">Not allowed</Badge>
+            <Button size="sm" variant="primary" className={btn} onClick={() => void grantStorage()}>
+              {storage?.permanentlyDenied ? "Open settings" : "Grant"}
+            </Button>
+          </>
+        )}
+      </FieldRow>
+      <FieldRow label="Downloads save to" hint={dlLabel}>
+        {choice(dlTarget === "downloads", "Downloads", () => updateSettings({ saveTreeUri: "", saveTreeName: "", saveDir: DOWNLOADS_SAVE }))}
+        {choice(dlTarget === "gallery", "Gallery", () => updateSettings({ saveTreeUri: "", saveTreeName: "", saveDir: GALLERY_SAVE }))}
+        {choice(dlTarget === "folder", "Choose folder...", () => void chooseFolder(s.saveTreeUri, (uri, name) => updateSettings({ saveTreeUri: uri, saveTreeName: name, saveDir: "" })), "folder")}
+      </FieldRow>
+      <FieldRow label="Edited files save to" hint={editLabel[s.editSaveTarget]}>
+        {choice(s.editSaveTarget === "source", "Same folder", () => updateSettings({ editSaveTarget: "source" }))}
+        {choice(s.editSaveTarget === "downloads", "Downloads", () => updateSettings({ editSaveTarget: "downloads" }))}
+        {choice(s.editSaveTarget === "gallery", "Gallery", () => updateSettings({ editSaveTarget: "gallery" }))}
+        {choice(
+          s.editSaveTarget === "folder",
+          "Choose folder...",
+          () => void chooseFolder(s.editTreeUri, (uri, name) => updateSettings({ editTreeUri: uri, editTreeName: name, editSaveTarget: "folder" })),
+          "folder",
+        )}
+      </FieldRow>
+    </>
+  );
+
   const tone = health === "ready" || health === "unsupported" ? "success" : health === "ffmpeg" ? "warning" : health === "ytdlp" ? "danger" : "neutral";
   const healthText =
     health === "ready"
@@ -130,11 +283,20 @@ export function SettingsPage({ phone, onSupportedSites }: { phone: boolean; onSu
             : "Checking";
 
   return (
-    <div ref={ref} className={phone ? "flex flex-col gap-3" : "bento"} style={phone ? undefined : { gridAutoRows: "minmax(88px, auto)" }}>
-      <Card span={phone ? undefined : SPANS.downloads} {...listItem(reduced, 0)} narrow={narrow} title="Downloads">
+    <div
+      ref={ref}
+      className={phone ? `flex min-w-0 flex-col gap-3 ${PAGE_BOTTOM}` : `bento ${PAGE_BOTTOM}`}
+      style={phone ? undefined : { gridAutoRows: "minmax(88px, auto)" }}
+    >
+      <Card span={phone ? undefined : SPANS.downloads} {...listItem(reduced, 0)} narrow={narrow} className={cardPad} title="Downloads">
         {downloads}
       </Card>
-      <Card span={phone ? undefined : SPANS.appearance} {...listItem(reduced, 1)} narrow={narrow} title="Appearance">
+      {platform === "android" && (
+        <Card span={phone ? undefined : SPANS.storage} {...listItem(reduced, 1)} narrow={narrow} className={cardPad} title="Android storage">
+          {storageCard}
+        </Card>
+      )}
+      <Card span={phone ? undefined : SPANS.appearance} {...listItem(reduced, 1)} narrow={narrow} className={cardPad} title="Appearance">
         <RadioGroup<ThemePref>
           label="Theme"
           value={s.theme}
@@ -152,11 +314,20 @@ export function SettingsPage({ phone, onSupportedSites }: { phone: boolean; onSu
         {...listItem(reduced, 2)}
         span={phone ? undefined : SPANS.tools}
         narrow={narrow}
+        className={cardPad}
         title="Components"
         action={
-          <Button size="sm" variant="ghost" icon="retry" onClick={() => void refreshBinaries()}>
-            Check
-          </Button>
+          <div className="flex shrink-0 items-center gap-1">
+            <Button size="sm" variant="ghost" icon="copy" className="shrink-0" onClick={() => void copyDiagnostics()}>
+              Copy diagnostics
+            </Button>
+            <Button size="sm" variant="ghost" icon="retry" className="shrink-0" onClick={() => {
+                void refreshBinaries();
+                if (platform === "android") recheckYtdlp();
+              }}>
+              Check
+            </Button>
+          </div>
         }
       >
         <div className="flex min-w-0 items-center gap-2">
@@ -172,23 +343,69 @@ export function SettingsPage({ phone, onSupportedSites }: { phone: boolean; onSu
               {versionsLine(bins.status)}
             </span>
           )}
-          <Badge tone={tone} className="ml-auto">
+          <Badge tone={tone} className="ml-auto shrink-0">
             {healthText}
           </Badge>
         </div>
+        {platform === "android" && (
+          <dl className="mt-3 flex min-w-0 flex-col gap-1.5">
+            {ytdlp === undefined ? (
+              <Skeleton className="h-3 w-40" />
+            ) : ytdlp === null ? (
+              <span className="text-fg-2">Status unavailable</span>
+            ) : (
+              <>
+                {(
+                  [
+                    ["yt-dlp", ytdlp.ytdlp],
+                    ["EJS solver", ytdlp.ejs],
+                    ["JS runtime", ytdlp.jsRuntime],
+                    ["ffmpeg", ytdlp.ffmpeg],
+                  ] as const
+                ).map(([label, value]) => (
+                  <div key={label} className="flex min-w-0 items-baseline gap-2">
+                    <dt className="w-24 shrink-0 text-fg-2">{label}</dt>
+                    <dd
+                      className={`min-w-0 truncate font-mono text-[12px] ${value ? "text-fg-2" : "text-danger"}`}
+                      title={value ?? "missing"}
+                    >
+                      {value ?? "missing"}
+                    </dd>
+                  </div>
+                ))}
+                <div className="flex min-w-0 items-baseline gap-2">
+                  <dt className="w-24 shrink-0 text-fg-2">Self-contained</dt>
+                  <dd
+                    className={`min-w-0 truncate font-mono text-[12px] ${ytdlp.ready ? "text-fg-2" : "text-danger"}`}
+                    title={ytdlp.problems.join(", ")}
+                  >
+                    {ytdlp.ready ? "Ready" : "Not ready"}
+                    {ytdlp.problems.length > 0 ? ` (${ytdlp.problems.join(", ")})` : ""}
+                  </dd>
+                </div>
+              </>
+            )}
+          </dl>
+        )}
         <button
           type="button"
           onClick={onSupportedSites}
-          className="icon-host mt-3 inline-flex items-center gap-1.5 self-start text-[12px] font-medium text-accent hover:underline"
+          className={`icon-host mt-3 inline-flex items-center gap-1.5 self-start text-[12px] font-medium text-accent hover:underline ${phone ? "min-h-11 pr-2" : ""}`}
         >
           <Icon name="globe" size={14} animated />
           Supported sites
         </button>
       </Card>
-      <Card span={phone ? undefined : SPANS.reset} {...listItem(reduced, 3)} narrow={narrow} bodyClassName="justify-center" className="justify-center">
+      <Card span={phone ? undefined : SPANS.reset} {...listItem(reduced, 3)} narrow={narrow} bodyClassName="justify-center" className={`justify-center ${cardPad}`}>
         <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
           <span className="text-fg-2">Restore every setting to its default. Your library is kept.</span>
-          <Button variant="danger-outline" icon="retry" className="shrink-0" onClick={() => setConfirmReset(true)}>
+          <Button
+            variant="danger-outline"
+            icon="retry"
+            size={phone ? "lg" : "md"}
+            className="shrink-0"
+            onClick={() => setConfirmReset(true)}
+          >
             Reset settings
           </Button>
         </div>

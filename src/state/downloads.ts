@@ -12,9 +12,20 @@ export const downloadsStore = createStore<Job[]>([]);
 const handles = new Map<string, DownloadHandle>();
 /** Requests kept for Retry; holds the fetched info so Android/web skip a re-fetch. */
 const infos = new Map<string, VideoInfo | undefined>();
+/** Jobs the user retried: pump starts these before other queued jobs. */
+const retried = new Set<string>();
 
 function patch(id: string, p: Partial<Job>) {
-  downloadsStore.set((jobs) => jobs.map((j) => (j.id === id ? { ...j, ...p } : j)));
+  downloadsStore.set((jobs) => {
+    const i = jobs.findIndex((j) => j.id === id);
+    if (i < 0) return jobs;
+    const cur = jobs[i];
+    // Progress lines often repeat the same values; skip them so subscribers do not re-render for nothing.
+    if ((Object.keys(p) as (keyof Job)[]).every((k) => Object.is(cur[k], p[k]))) return jobs;
+    const next = jobs.slice();
+    next[i] = { ...cur, ...p };
+    return next;
+  });
 }
 
 function newId(): string {
@@ -30,6 +41,13 @@ export function enqueue(
   choice: { format: FormatOption; audioBitrate?: AudioBitrate; streamId?: string },
 ): string {
   const { format, audioBitrate, streamId } = choice;
+  const dup = downloadsStore
+    .get()
+    .find((j) => j.url === info.url && j.formatId === format.id && (j.status === "queued" || handles.has(j.id)));
+  if (dup) {
+    notify({ tone: "info", title: "Already downloading this." });
+    return dup.id;
+  }
   const id = newId();
   infos.set(id, info);
   const job: Job = {
@@ -65,9 +83,11 @@ function pump() {
   const limit = settingsStore.get().parallelDownloads;
   const jobs = downloadsStore.get();
   let running = jobs.filter((j) => handles.has(j.id)).length;
-  // Oldest queued first.
-  for (let i = jobs.length - 1; i >= 0; i--) {
-    const job = jobs[i];
+  // Retried jobs first, then oldest queued first.
+  const order = jobs
+    .toReversed()
+    .toSorted((a, b) => Number(retried.has(b.id)) - Number(retried.has(a.id)));
+  for (const job of order) {
     if (running >= limit) break;
     if (job.status !== "queued" || handles.has(job.id)) continue;
     run(job);
@@ -92,7 +112,9 @@ function run(job: Job) {
         streamId: job.streamId,
         preferH264: s.preferH264,
         embedThumbnail: s.embedThumbnail,
+        embedVideoMeta: s.embedVideoMeta,
         outputDir: s.saveDir || undefined,
+        outputTreeUri: s.saveTreeUri || undefined,
         cookiesBrowser: s.cookiesBrowser,
       },
       (p) => onProgress(job.id, p),
@@ -102,6 +124,7 @@ function run(job: Job) {
     return;
   }
   handles.set(job.id, handle);
+  retried.delete(job.id);
   patch(job.id, { status: "downloading" });
   void handle.done.then((last) => finish(job.id, last));
 }
@@ -109,7 +132,13 @@ function run(job: Job) {
 function onProgress(id: string, p: DownloadProgress) {
   const job = downloadsStore.get().find((j) => j.id === id);
   if (!job || !isActive(job.status)) return;
+  // The engine's last line repeats a terminal status. Let finish() apply it: finish() is what writes the
+  // Library entry and the toast, and it skips jobs that already look finished. Applying it here would
+  // mark the job done first and finish() would then return early, leaving the Library empty.
+  if (!isActive(p.status)) return;
+  const stage = (p as { stage?: string }).stage;
   patch(id, {
+    ...(stage ? ({ stage } as Partial<Job>) : {}),
     status: p.status,
     pct: p.percent ?? (p.totalBytes ? (p.downloadedBytes / p.totalBytes) * 100 : null),
     speedBps: p.speedBps ?? null,
@@ -123,6 +152,11 @@ function finish(id: string, last: DownloadProgress) {
   handles.delete(id);
   const job = downloadsStore.get().find((j) => j.id === id);
   if (!job) {
+    pump();
+    return;
+  }
+  // Already finished (e.g. cancel arrived after completion): never report it twice.
+  if (!isActive(job.status)) {
     pump();
     return;
   }
@@ -147,21 +181,30 @@ function finish(id: string, last: DownloadProgress) {
           ]
             .filter(Boolean)
             .join(" · ") || undefined,
+    stage: undefined,
     finishedAt: Date.now(),
   };
   patch(id, done);
-  if (status === "done") {
+  if (status === "done" && last.notice) {
+    notify({
+      tone: "info",
+      title: "Saved, with a note",
+      body: `${done.title} · ${last.notice}`,
+      action: { label: "Open downloads", run: () => navigate("downloads") },
+      duration: 6000,
+    });
+  } else if (status === "done") {
     notify({
       tone: "success",
       title: "Saved to your library",
-      body: done.summary ? `${done.title} · ${done.summary}` : done.title,
+      body: [done.title, done.summary, last.displayPath ? `Saved to ${last.displayPath}` : ""].filter(Boolean).join(" · "),
       action: { label: "Open downloads", run: () => navigate("downloads") },
     });
   } else if (status === "failed") {
     notify({
       tone: "error",
       title: "Download failed",
-      body: `${done.title}: ${done.error?.message ?? "Unknown error"}`,
+      body: done.error?.message ?? "Something went wrong.",
       duration: 6000,
     });
   }
@@ -196,7 +239,10 @@ export function cancelJob(id: string) {
 }
 
 export function retryJob(id: string) {
+  if (handles.has(id)) return;
+  retried.add(id);
   patch(id, {
+    stage: undefined,
     status: "queued",
     pct: null,
     error: null,
@@ -216,7 +262,10 @@ export function removeJob(id: string) {
 }
 
 export function clearFinished() {
-  downloadsStore.set((jobs) => jobs.filter((j) => isActive(j.status)));
+  downloadsStore.set((jobs) => {
+    for (const j of jobs) if (!isActive(j.status)) infos.delete(j.id);
+    return jobs.filter((j) => isActive(j.status));
+  });
 }
 
 /** Library "Download again": queue from the stored URL with the stored format id. */
@@ -260,7 +309,18 @@ export function redownload(item: {
 }
 
 export function cancelAll() {
-  for (const h of handles.values()) h.cancel();
+  const now = Date.now();
+  let count = handles.size;
+  // Queued jobs first, so pump cannot start them when a running one ends.
+  downloadsStore.set((jobs) =>
+    jobs.map((j) => {
+      if (j.status !== "queued" || handles.has(j.id)) return j;
+      count++;
+      return { ...j, status: "cancelled" as const, finishedAt: now };
+    }),
+  );
+  for (const h of Array.from(handles.values())) h.cancel();
+  if (count > 0) notify({ tone: "info", title: `Cancelled ${count} download${count === 1 ? "" : "s"}` });
 }
 
 export function useDownloads(): Job[] {
@@ -269,4 +329,9 @@ export function useDownloads(): Job[] {
 
 export function useActiveCount(): number {
   return useStore(downloadsStore, (s) => s.filter((j) => isActive(j.status)).length);
+}
+
+/** True when any job is done, failed or cancelled ("Clear finished"). Re-renders only when that flips. */
+export function useHasFinished(): boolean {
+  return useStore(downloadsStore, (s) => s.some((j) => !isActive(j.status)));
 }

@@ -1,13 +1,14 @@
 import { useEffect } from "react";
 import { createStore, useStore } from "./store";
 
-export type Page = "home" | "downloads" | "library" | "favorites" | "sources" | "settings";
-/** Sidebar order; Mod+1..6 follow it. */
-export const PAGES: Page[] = ["home", "downloads", "library", "favorites", "sources", "settings"];
+export type Page = "home" | "downloads" | "library" | "editor" | "favorites" | "sources" | "settings";
+/** Sidebar order. Shortcuts are bound per item in nav-items (Editor is Mod+7 so 1..6 stay stable). */
+export const PAGES: Page[] = ["home", "downloads", "library", "editor", "favorites", "sources", "settings"];
 export const PAGE_TITLES: Record<Page, string> = {
   home: "Home",
   downloads: "Downloads",
   library: "Library",
+  editor: "Editor",
   favorites: "Favorites",
   sources: "Sources",
   settings: "Settings",
@@ -29,6 +30,8 @@ export type Command =
 const listeners = new Set<(c: Command) => void>();
 
 let pending: { page: Page; command: Command } | null = null;
+/** Pages that stay mounted (hidden) and so never re-run useCommand's mount effect. */
+const mountedPages = new Set<Page>();
 
 export function emit(c: Command) {
   for (const l of listeners) l(c);
@@ -38,6 +41,12 @@ export function emit(c: Command) {
 export function emitOn(page: Page, c: Command) {
   if (navStore.get() === page) {
     emit(c);
+    return;
+  }
+  if (mountedPages.has(page)) {
+    // Kept-alive page: it is already mounted, just hidden. Deliver once it is visible (focus needs that).
+    navigate(page);
+    requestAnimationFrame(() => emit(c));
     return;
   }
   pending = { page, command: c };
@@ -52,7 +61,9 @@ export function useCommand(handler: (c: Command) => void, page?: Page) {
       handler(c);
     }
     listeners.add(handler);
+    if (page) mountedPages.add(page);
     return () => {
+      if (page) mountedPages.delete(page);
       listeners.delete(handler);
     };
   }, [handler, page]);

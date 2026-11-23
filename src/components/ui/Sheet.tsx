@@ -3,9 +3,9 @@ import { Dialog } from "./Dialog";
 import { Icon, type IconName } from "./Icon";
 
 /**
- * Phone overlay (UI_MOBILE.md). No bottom sheets: this is a centered modal with a
- * 16px gutter, max 85vh, internal scroll, spring entrance, Esc / backdrop close.
- * Name kept so existing imports (Home, DownloadRow, LibraryList) stay valid.
+ * Phone overlay. On a phone-width viewport this is a bottom sheet (max 85dvh,
+ * internal scroll, bottom safe-area padding); wider, a centered modal. Esc /
+ * backdrop close, focus trap and scroll lock come from Dialog (useModal).
  */
 export function Sheet({
   open,
@@ -33,7 +33,10 @@ export interface SheetAction {
   disabled?: boolean;
 }
 
-/** Centered list of actions: 48px rows with 20px icons. */
+/**
+ * List of actions: 48px rows with 20px icons. Rendered as a dialog of plain
+ * buttons (not role=menu), so Tab / Shift+Tab and Enter work with no roving focus.
+ */
 export function ActionSheet({
   open,
   onClose,
@@ -47,12 +50,11 @@ export function ActionSheet({
 }) {
   return (
     <Sheet open={open} onClose={onClose} title={title}>
-      <div className="-mx-2 flex flex-col gap-1" role="menu">
+      <div className="-mx-2 flex flex-col gap-1" role="group" aria-label={title ?? "Options"}>
         {actions.map((a) => (
           <button
             key={a.label}
             type="button"
-            role="menuitem"
             disabled={a.disabled}
             onClick={() => {
               onClose();

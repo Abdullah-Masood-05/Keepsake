@@ -1,13 +1,19 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DownloadRow } from "../components/features/DownloadRow";
+import { DownloadsEntry } from "../components/features/DownloadsEntry";
 import { FormatPicker, type PickerChoice } from "../components/features/FormatPicker";
 import { PreviewCard, Thumb } from "../components/features/PreviewCard";
+import { PRESETS, QualityPresets, resolvePreset, type PresetKey } from "../components/features/QualityPresets";
+import { RecentStrip } from "../components/features/RecentStrip";
+import { SiteChips } from "../components/features/SiteChips";
+import { SupportedSitesDialog } from "../components/features/SupportedSitesDialog";
 import { ActionModal } from "../components/ui/ActionModal";
 import { Button, IconButton } from "../components/ui/Button";
 import { Card, spanStyle, type Span } from "../components/ui/Card";
 import { Glyph } from "../components/ui/Glyph";
 import { Icon, type IconName } from "../components/ui/Icon";
+import { EmptyHome } from "../components/ui/illustrations";
 import { ActivityChart, CategoryBars, StatCard } from "../components/ui/Stats";
 import { Sheet } from "../components/ui/Sheet";
 import { listItem, t } from "../components/ui/motion";
@@ -18,12 +24,15 @@ import { formatBytes, hostOf, isHttpUrl, MOD, relativeTime } from "../state/form
 import { useWidth } from "../state/hooks";
 import { computeStats, useLibrary } from "../state/library";
 import { isActive } from "../state/models";
+import { pickAndroidFolder } from "../engine/android-folder";
+import { DOWNLOADS_SAVE, GALLERY_SAVE } from "../engine/android-gallery";
 import { pickFolder, readClipboard } from "../state/native";
 import { toggleFavorite, useIsFavorite } from "../state/favorites";
 import { navigate, openAddLink, useCommand, type Command } from "../state/nav";
 import { useSources } from "../state/sources";
 import { useStats } from "../state/stats";
 import { favoriteFromInfo, favoriteIdOf } from "./AddLink";
+import { PAGE_BOTTOM, PAGE_STACK, usePageActive } from "../components/layout/page";
 import { settingsStore, updateSettings, useSettings } from "../state/settings";
 import { createStore, useStore } from "../state/store";
 import { notify } from "../state/toast";
@@ -51,8 +60,40 @@ const setHome = (p: Partial<HomeState>) => home.set((s) => ({ ...s, ...p }));
 let fetchToken = 0;
 let fetchAbort: AbortController | null = null;
 let readyTimer: number | undefined;
+/** Text of the last fetch request (phone: tells "new link typed" from "preview of this link"). */
+let lastFetchedInput = "";
 
-const FETCH_MESSAGES = ["Reading the link…", "Checking available formats…", "Almost there…"];
+/** Same bitrate rule and default (192 kbps) as FormatPicker, so a quick pick enqueues what the picker would. */
+const HAS_BITRATE = new Set(["mp3", "aac"]);
+function presetChoice(format: FormatOption): PickerChoice {
+  return {
+    format,
+    audioBitrate: format.mode === "audio" && HAS_BITRATE.has(format.audioFormat ?? "") ? 192 : undefined,
+    streamId: undefined,
+  };
+}
+
+/** Like readClipboard, but reports a blocked/unsupported clipboard so the UI can explain the fallback. */
+async function readClipboardChecked(): Promise<{ text: string; blocked: boolean }> {
+  if (!navigator.clipboard?.readText) return { text: "", blocked: true };
+  try {
+    return { text: await navigator.clipboard.readText(), blocked: false };
+  } catch {
+    return { text: "", blocked: true };
+  }
+}
+
+const RETRYABLE = new Set<string>(["network", "timeout", "rate_limited"]);
+
+/** Rotating lines for the cooking fetch modal: ongoing work only, never a result. */
+const FETCH_MESSAGES = [
+  "Reading the label…",
+  "Sniffing the link…",
+  "Chopping up the details…",
+  "Stirring the pot…",
+  "Tasting the formats…",
+  "Checking the seasoning…",
+];
 
 async function runFetch(raw: string) {
   const url = raw.trim();
@@ -121,6 +162,8 @@ export function HomePage({ phone }: { phone: boolean }) {
   const jobs = useDownloads();
   const library = useLibrary();
   const saveDir = useSettings((s) => s.saveDir);
+  const saveTreeUri = useSettings((s) => s.saveTreeUri);
+  const saveTreeName = useSettings((s) => s.saveTreeName);
   const clipboardDetect = useSettings((s) => s.clipboardDetect);
   const reduced = useReducedMotion();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -130,6 +173,10 @@ export function HomePage({ phone }: { phone: boolean }) {
   const [sheet, setSheet] = useState(false);
   const [clipLink, setClipLink] = useState<string | null>(null);
   const [showDetails, setShowDetails] = useState(false);
+  const [sites, setSites] = useState(false);
+  // Phone quick-quality pick, keyed by link so a new fetch starts with nothing picked.
+  const [presetSel, setPresetSel] = useState<{ url: string; key: PresetKey | null }>({ url: "", key: null });
+  const preset = info && presetSel.url === info.url ? presetSel.key : null;
   const platform = getPlatform();
 
   const activeJobs = useMemo(() => jobs.filter((j) => isActive(j.status)).slice(0, 3), [jobs]);
@@ -141,6 +188,7 @@ export function HomePage({ phone }: { phone: boolean }) {
   const fetchNow = useCallback((url?: string) => {
     const u = url ?? home.get().input;
     if (url !== undefined) setHome({ input: url });
+    lastFetchedInput = u.trim();
     setShowDetails(false);
     void runFetch(u);
   }, []);
@@ -151,20 +199,37 @@ export function HomePage({ phone }: { phone: boolean }) {
         inputRef.current?.focus();
         inputRef.current?.select();
       } else if (c === "paste-and-fetch") {
-        void readClipboard().then((text) => {
+        void readClipboardChecked().then(({ text, blocked }) => {
           const v = text.trim();
           if (v) fetchNow(v);
+          // Phone: explain why nothing happened instead of failing silently.
+          else if (phone)
+            notify(
+              blocked
+                ? {
+                    tone: "info",
+                    title: "Couldn't read the clipboard",
+                    body: "Long-press the link box and choose Paste.",
+                  }
+                : {
+                    tone: "info",
+                    title: "Clipboard is empty",
+                    body: "Copy a link from YouTube, TikTok or Instagram first.",
+                  },
+            );
           inputRef.current?.focus();
         });
       }
     },
-    [fetchNow],
+    [fetchNow, phone],
   );
   useCommand(onCommand, "home");
 
   // Clipboard detect (Settings, default off): on window focus, offer a new link. Never auto-fetches.
+  // Phones also check when Home opens and when the app returns to the foreground.
+  const pageActive = usePageActive();
   useEffect(() => {
-    if (!clipboardDetect) return;
+    if (!clipboardDetect || !pageActive) return;
     let last = "";
     const onFocus = () => {
       void readClipboard().then((text) => {
@@ -175,14 +240,26 @@ export function HomePage({ phone }: { phone: boolean }) {
         }
       });
     };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") onFocus();
+    };
     window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  }, [clipboardDetect]);
+    if (phone) {
+      document.addEventListener("visibilitychange", onVisible);
+      onFocus();
+    }
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [clipboardDetect, phone, pageActive]);
 
   const onDownload = (choice: PickerChoice) => {
     if (!info) return;
     enqueue(info, choice);
     setHome({ input: "" });
+    // Phone: drop the quick pick so the pinned bar can't re-enqueue the same file with one more tap.
+    setPresetSel({ url: "", key: null });
     notify({
       tone: "success",
       title: "Added to downloads",
@@ -197,14 +274,16 @@ export function HomePage({ phone }: { phone: boolean }) {
   const showEmpty = !info && !loading;
 
   const pasteBar = (
+    // Wraps at very narrow widths (320px): the field keeps a 9rem basis and the
+    // Fetch button drops to its own full-width row instead of overflowing.
     <form
-      className="flex items-center gap-2"
+      className="flex flex-wrap items-center gap-2"
       onSubmit={(e) => {
         e.preventDefault();
         fetchNow();
       }}
     >
-      <label className="relative flex-1">
+      <label className={`relative min-w-0 flex-1 ${phone ? "basis-[9rem]" : "basis-[12rem]"}`}>
         <Icon name="link" size={18} className="absolute top-1/2 left-3 -translate-y-1/2 text-fg-3" />
         <input
           ref={inputRef}
@@ -220,14 +299,14 @@ export function HomePage({ phone }: { phone: boolean }) {
           aria-label="Link"
           spellCheck={false}
           autoComplete="off"
-          className={`w-full rounded-md border border-line bg-inset pr-10 pl-10 text-[13px] text-fg shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] transition-[border-color,box-shadow] duration-200 placeholder:text-fg-3 hover:border-line-strong focus:border-accent-border focus:shadow-[0_0_0_3px_var(--accent-soft)] ${phone ? "h-12" : "h-10"}`}
+          className={`w-full min-w-0 truncate rounded-md border border-line bg-inset pl-10 text-[13px] text-fg shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] transition-[border-color,box-shadow] duration-200 placeholder:text-fg-3 hover:border-line-strong focus:border-accent-border focus:shadow-[0_0_0_3px_var(--accent-soft)] ${phone ? "h-12 pr-12" : "h-10 pr-10"}`}
         />
         {input && (
           <IconButton
             icon="x"
             label="Clear"
-            size={phone ? 40 : 28}
-            className="absolute top-1/2 right-1.5 -translate-y-1/2"
+            size={phone ? 44 : 28}
+            className={`absolute top-1/2 -translate-y-1/2 ${phone ? "right-0.5" : "right-1.5"}`}
             onClick={() => {
               setHome({ input: "", error: null });
               inputRef.current?.focus();
@@ -245,7 +324,9 @@ export function HomePage({ phone }: { phone: boolean }) {
         type="submit"
         variant="primary"
         size={phone ? "lg" : "md"}
-        className={phone ? "" : "h-10"}
+        // Fixed min width so "Fetch" -> "Fetching" never changes where the row wraps.
+        // Under 360px viewport the row wraps and Fetch takes the full second line.
+        className={phone ? "min-w-[7.25rem] max-[359.98px]:grow" : "h-10 min-w-[6.5rem]"}
         loading={loading}
         disabled={!input.trim() && !loading}
         title="Fetch (Enter)"
@@ -273,6 +354,7 @@ export function HomePage({ phone }: { phone: boolean }) {
             <Button
               size="sm"
               variant="primary"
+              className={phone ? "h-11 shrink-0" : "shrink-0"}
               onClick={() => {
                 const v = clipLink;
                 setClipLink(null);
@@ -302,13 +384,15 @@ export function HomePage({ phone }: { phone: boolean }) {
         </span>
         <div className="min-w-0 flex-1 pt-0.5">
           <div className="font-semibold">
-            {error?.code === "empty_url" ? "Paste a link first." : "Couldn't read this link"}
+            {error?.code === "empty_url"
+              ? "Paste a link first."
+              : (error?.title ?? "Couldn't read this link")}
           </div>
           {error?.code !== "empty_url" && <p className="selectable text-fg-2">{err.body}</p>}
           {(err.details || error?.detail) && (
             <button
               type="button"
-              className="mt-1 text-[11px] text-fg-2 underline-offset-2 hover:underline"
+              className={`mt-1 text-[11px] text-fg-2 underline-offset-2 hover:underline ${phone ? "min-h-11 pr-3" : ""}`}
               onClick={() => setShowDetails((v) => !v)}
             >
               {showDetails ? "Hide details" : "Show details"}
@@ -322,7 +406,7 @@ export function HomePage({ phone }: { phone: boolean }) {
           {error?.code !== "empty_url" && (
             <div className={`flex flex-wrap gap-2 ${phone ? "mt-3" : "mt-2"}`}>
               <Button size={phone ? "lg" : "sm"} variant="secondary" icon="retry" onClick={() => fetchNow()}>
-                Try again
+                {error && RETRYABLE.has(error.code) ? "Retry" : "Try again"}
               </Button>
               {error?.cookiesHint && (
                 <Button size={phone ? "lg" : "sm"} variant="ghost" onClick={() => navigate("settings")}>
@@ -346,12 +430,14 @@ export function HomePage({ phone }: { phone: boolean }) {
   const fetchModal = (
     <ActionModal
       open={loading || ready}
-      phase={loading ? "working" : "success"}
-      title={loading ? "Reading your link" : "Found it"}
+      // Success only when a result arrived, so a cancel or error never exits as "Found it".
+      phase={ready ? "success" : "working"}
+      title={ready ? "Found it" : "Reading your link"}
       messages={FETCH_MESSAGES}
-      detail={loading ? hostOf(input) || undefined : info?.title}
+      detail={ready ? info?.title : hostOf(input) || undefined}
       successLabel="Pick a format to continue"
       onCancel={cancelFetch}
+      scene="cooking"
     />
   );
 
@@ -372,37 +458,165 @@ export function HomePage({ phone }: { phone: boolean }) {
 
   const enter = (i: number) => listItem(reduced, i);
 
-  // ---- Phone: single column (16px gutter from <main>, 12px gaps), sticky paste bar,
-  // format picker in a centered modal ----
+  // ---- Phone: single column (16px gutter from <main>, 12px gaps). Order follows the task:
+  // Downloads entry, paste hero, preview + quick picks, recent strip, the rest. The primary
+  // action (Fetch / Download / Choose format) is pinned above the tab bar, left of the FAB. ----
   if (phone) {
-    return (
-      <div className="flex flex-col gap-3 pb-20">
-        {/* -mb-3 cancels the column gap so the bar's own 12px bottom padding is the gap. */}
-        <div className="sticky top-0 z-10 -mx-4 -mb-3 flex flex-col gap-3 bg-app px-4 pt-3 pb-3">
-          {pasteBar}
-          {notices}
-        </div>
-        {errorBlock}
-        <Card className="relative !p-4">
-          {heart}
-          <PreviewCard info={info} loading={loading} phone onOpenFormats={() => setSheet(true)} />
-        </Card>
-        <SourcesCard phone />
-        <Card
-          className="!p-4"
-          title="Active downloads"
-          action={<Link onClick={() => navigate("downloads")}>View all</Link>}
+    const typed = input.trim();
+    // A link typed or pasted that has not been fetched yet (or whose fetch failed): the primary action is Fetch.
+    const fresh = typed !== "" && (typed !== lastFetchedInput || !!error);
+    const presetFormat = info && preset ? resolvePreset(preset, formats) : null;
+    const presetLabel = PRESETS.find((p) => p.key === preset)?.label ?? "";
+    const showBar = loading || fresh || !!info;
+
+    const clipSuggestion = (
+      <AnimatePresence initial={false}>
+        {clipLink && (
+          <motion.div
+            key="clip"
+            role="status"
+            initial={reduced ? { opacity: 0 } : { opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={reduced ? { opacity: 0 } : { opacity: 0, y: -4 }}
+            transition={reduced ? t.fast : t.spring}
+            className="flex min-w-0 items-center gap-3 rounded-md border border-accent-border bg-accent-soft p-3"
+          >
+            <span className="grid size-9 shrink-0 place-items-center rounded-full bg-card text-accent">
+              <Icon name="link" size={16} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="text-[13px] font-semibold">Download this link?</div>
+              <div className="truncate text-[12px] text-fg-2" title={clipLink}>
+                Copied from {hostOf(clipLink) || "your clipboard"}
+              </div>
+            </div>
+            <Button
+              size="md"
+              variant="primary"
+              className="shrink-0"
+              onClick={() => {
+                const v = clipLink;
+                setClipLink(null);
+                fetchNow(v);
+              }}
+            >
+              Use link
+            </Button>
+            <IconButton icon="x" label="Dismiss" size={44} className="-mr-1.5 shrink-0" onClick={() => setClipLink(null)} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+    );
+
+    const phonePaste = (
+      <Card className="!p-4" aria-label="Paste a link">
+        <h2 className="text-[17px] leading-6 font-semibold">Save a video</h2>
+        <p className="mb-3 text-[12px] leading-4 text-fg-2">Paste a link, pick a quality, done.</p>
+        <form
+          className="flex min-w-0 items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            fetchNow();
+          }}
         >
-          {activeJobs.length === 0 ? (
-            <p className="py-3 text-center text-fg-2">Nothing downloading</p>
-          ) : (
-            <div className="-mx-1.5 flex flex-col gap-1">
-              {activeJobs.map((j) => (
+          <label className="relative min-w-0 flex-1">
+            <Icon name="link" size={18} className="absolute top-1/2 left-3 -translate-y-1/2 text-fg-3" />
+            <input
+              ref={inputRef}
+              value={input}
+              onChange={(e) => setHome({ input: e.target.value, error: null })}
+              onKeyDown={(e) => {
+                if (e.key === "Escape" && home.get().loading) {
+                  e.preventDefault();
+                  cancelFetch();
+                }
+              }}
+              placeholder="Paste a link here"
+              aria-label="Link"
+              inputMode="url"
+              enterKeyHint="go"
+              spellCheck={false}
+              autoComplete="off"
+              autoCapitalize="off"
+              autoCorrect="off"
+              className="h-12 w-full min-w-0 truncate rounded-md border border-line bg-inset pr-11 pl-10 text-[15px] text-fg transition-[border-color,box-shadow] duration-200 placeholder:text-fg-3 focus:border-accent-border focus:shadow-[0_0_0_3px_var(--accent-soft)]"
+            />
+            {input && (
+              <IconButton
+                icon="x"
+                label="Clear"
+                size={44}
+                className="absolute top-1/2 right-0.5 -translate-y-1/2"
+                onClick={() => {
+                  setHome({ input: "", error: null });
+                  inputRef.current?.focus();
+                }}
+              />
+            )}
+          </label>
+          <Button
+            type="button"
+            variant={typed ? "secondary" : "primary"}
+            size="lg"
+            icon="clipboard"
+            className="shrink-0 !px-4"
+            title={`Paste from clipboard (${MOD}+V)`}
+            onClick={() => onCommand("paste-and-fetch")}
+          >
+            Paste
+          </Button>
+        </form>
+        <div className="mt-3">
+          <SiteChips onMore={() => setSites(true)} />
+        </div>
+      </Card>
+    );
+
+    return (
+      <div className={`flex min-w-0 flex-col gap-3 pt-3 ${PAGE_BOTTOM}`}>
+        <div className="flex min-w-0 flex-col gap-2">
+          <DownloadsEntry jobs={jobs} />
+          {activeJobs.length > 0 && (
+            <div className="card flex flex-col gap-1 px-1.5 py-1">
+              {activeJobs.slice(0, 2).map((j) => (
                 <DownloadRow key={j.id} job={j} compact phone />
               ))}
             </div>
           )}
-        </Card>
+        </div>
+        {phonePaste}
+        {clipSuggestion}
+        {errorBlock}
+        {/* First run: nothing fetched, downloading or downloaded yet. Decorative; the paste card says it all. */}
+        {!loading && !info && !error && jobs.length === 0 && library.length === 0 && (
+          <div className="mx-auto w-full max-w-[220px]">
+            <EmptyHome />
+          </div>
+        )}
+        {(loading || info) && (
+          <Card className="relative !p-4">
+            {heart}
+            <PreviewCard info={info} loading={loading} phone />
+            {info && !loading && (
+              <div className="mt-4 flex flex-col gap-2 border-t border-line pt-3">
+                <div className="flex h-7 items-center justify-between gap-2">
+                  <span className="text-[13px] font-semibold">Quick quality</span>
+                  <Link onClick={() => setSheet(true)}>All formats</Link>
+                </div>
+                <QualityPresets
+                  formats={formats}
+                  value={preset}
+                  onChange={(k) => setPresetSel({ url: info.url, key: k })}
+                />
+                <p className="text-[11px] leading-4 text-fg-3">
+                  {presetFormat ? `Selected: ${presetFormat.label}` : "Tap a quality, or open All formats for every option."}
+                </p>
+              </div>
+            )}
+          </Card>
+        )}
+        <RecentStrip items={library.slice(0, 8)} />
+        <SourcesCard phone />
         <div className="grid grid-cols-2 gap-3">
           {statCards.map((s) => (
             <StatCard key={s.label} {...s} className="min-h-[124px]" />
@@ -414,13 +628,56 @@ export function HomePage({ phone }: { phone: boolean }) {
         <Card className="!p-4" title="Categories">
           <CategoryBars items={stats.byCategory} />
         </Card>
-        <RecentCard recent={recent} reduced={reduced} className="!p-4" />
-        <SaveFolderCard saveDir={saveDir} platform={platform} phone />
+        <SaveFolderCard saveDir={saveDir} treeUri={saveTreeUri} treeName={saveTreeName} platform={platform} phone />
+        {showBar && (
+          // Thumb-reachable primary action, pinned to the bottom of <main> (which already ends
+          // above the tab bar and its safe-area inset). mr-[4.25rem] keeps it clear of the 56px FAB.
+          <div
+            className="pointer-events-none sticky bottom-0 z-20 -mx-4 px-4 pt-6 pb-4"
+            style={{ background: "linear-gradient(to top, var(--bg-app) 60%, transparent)" }}
+          >
+            <div className="pointer-events-auto mr-[4.25rem] flex min-w-0 gap-2">
+              {loading ? (
+                <>
+                  <Button variant="primary" size="lg" loading disabled className="min-w-0 flex-1">
+                    Fetching
+                  </Button>
+                  <Button variant="secondary" size="lg" className="shrink-0" onClick={cancelFetch}>
+                    Cancel
+                  </Button>
+                </>
+              ) : fresh ? (
+                <Button variant="primary" size="lg" icon="search" className="min-w-0 flex-1" onClick={() => fetchNow()}>
+                  Fetch link
+                </Button>
+              ) : presetFormat ? (
+                <>
+                  <Button
+                    variant="primary"
+                    size="lg"
+                    icon="download"
+                    className="min-w-0 flex-1"
+                    title={presetFormat.label}
+                    onClick={() => onDownload(presetChoice(presetFormat))}
+                  >
+                    {`Download ${presetLabel}`}
+                  </Button>
+                  <IconButton icon="list" label="All formats" size={48} className="shrink-0" onClick={() => setSheet(true)} />
+                </>
+              ) : (
+                <Button variant="primary" size="lg" icon="download" className="min-w-0 flex-1" onClick={() => setSheet(true)}>
+                  Choose format
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
         <Sheet open={sheet} onClose={() => setSheet(false)} title="Format">
-          <div className="flex min-h-[300px] flex-1 flex-col">
+          <div className="flex min-h-[300px] min-w-0 flex-1 flex-col">
             <FormatPicker info={info} formats={formats} disabled={loading} onDownload={onDownload} fill />
           </div>
         </Sheet>
+        <SupportedSitesDialog open={sites} onClose={() => setSites(false)} fullScreen />
         {fetchModal}
       </div>
     );
@@ -428,7 +685,7 @@ export function HomePage({ phone }: { phone: boolean }) {
 
   // ---- Desktop bento ----
   return (
-    <div className="flex flex-col gap-4 pb-16">
+    <div className={PAGE_STACK}>
       <Card className="h-[88px] justify-center !py-0" bodyClassName="justify-center">
         {pasteBar}
       </Card>
@@ -498,7 +755,7 @@ export function HomePage({ phone }: { phone: boolean }) {
 
         <RecentCard recent={recent} reduced={reduced} span={SPANS.recent} narrow={narrow} />
         <SourcesCard span={SPANS.sources} narrow={narrow} />
-        <SaveFolderCard saveDir={saveDir} platform={platform} span={SPANS.folder} narrow={narrow} />
+        <SaveFolderCard saveDir={saveDir} treeUri={saveTreeUri} treeName={saveTreeName} platform={platform} span={SPANS.folder} narrow={narrow} />
       </div>
       {fetchModal}
     </div>
@@ -548,7 +805,7 @@ function FavoriteHeart({ info, className = "", size = 36 }: { info: VideoInfo; c
         });
       }}
       style={{ width: size, height: size }}
-      className={`group/heart grid place-items-center rounded-full border border-line bg-card/90 text-accent shadow-card backdrop-blur transition-colors duration-150 hover:border-accent-border ${className}`}
+      className={`group/heart grid place-items-center rounded-full border border-line bg-card/95 text-accent shadow-card transition-colors duration-150 hover:border-accent-border ${className}`}
     >
       <AnimatePresence>
         {on && !reduced && (
@@ -597,7 +854,8 @@ function FavoriteHeart({ info, className = "", size = 36 }: { info: VideoInfo; c
 /** Sources shortcut: stacked avatars of saved creators and a way in (the only entry on phones). */
 function SourcesCard({ span, narrow, phone }: { span?: Span; narrow?: boolean; phone?: boolean }) {
   const sources = useSources();
-  const top = sources.slice(0, 4);
+  // Three avatars on phones so the label keeps room at 320px; four elsewhere.
+  const top = sources.slice(0, phone ? 3 : 4);
   const count = sources.length;
   return (
     <Card
@@ -614,18 +872,18 @@ function SourcesCard({ span, narrow, phone }: { span?: Span; narrow?: boolean; p
         if (e.key === "Enter" && e.target === e.currentTarget) navigate("sources");
       }}
     >
-      <div className="flex items-center gap-3">
-        <span className="text-accent">
+      <div className="flex min-w-0 items-center gap-3">
+        <span className="shrink-0 text-accent">
           <Glyph icon="sources" size={18} box={40} on />
         </span>
         <div className="min-w-0 flex-1">
-          <div className="text-[14px] font-semibold">Sources</div>
+          <div className="truncate text-[14px] font-semibold">Sources</div>
           <div className="truncate text-[11px] text-fg-2">
             {count === 0 ? "Save channels and profiles" : `${count} saved creator${count === 1 ? "" : "s"}`}
           </div>
         </div>
         {top.length > 0 ? (
-          <div className="flex -space-x-2">
+          <div className="flex shrink-0 -space-x-2">
             {top.map((s) => (
               <span
                 key={s.id}
@@ -644,6 +902,7 @@ function SourcesCard({ span, narrow, phone }: { span?: Span; narrow?: boolean; p
           <Button
             size="sm"
             icon="plus"
+            className={phone ? "h-11 shrink-0" : "shrink-0"}
             onClick={(e) => {
               e.stopPropagation();
               openAddLink("sources");
@@ -652,7 +911,7 @@ function SourcesCard({ span, narrow, phone }: { span?: Span; narrow?: boolean; p
             Add
           </Button>
         )}
-        <Icon name="chevronRight" size={18} animated className="text-fg-3" />
+        <Icon name="chevronRight" size={18} animated className="shrink-0 text-fg-3" />
       </div>
     </Card>
   );
@@ -694,11 +953,13 @@ function RecentCard({
                 <Thumb src={r.thumbnailUrl} className="h-8 w-12 shrink-0 rounded-sm" icon={r.mode === "audio" ? "audio" : "video"} />
                 <span className="min-w-0 flex-1 truncate text-[13px]">{r.title}</span>
                 <span
-                  className={`text-[11px] ${r.status === "done" ? "text-fg-2" : r.status === "failed" ? "text-danger" : "text-fg-3"}`}
+                  className={`shrink-0 text-[11px] ${r.status === "done" ? "text-fg-2" : r.status === "failed" ? "text-danger" : "text-fg-3"}`}
                 >
                   {r.status === "done" ? r.format : r.status}
                 </span>
-                <span className="tabular w-20 text-right text-[11px] text-fg-2">{relativeTime(r.date)}</span>
+                <span className="tabular w-20 shrink-0 text-right text-[11px] text-fg-2 max-[479.98px]:w-auto">
+                  {relativeTime(r.date)}
+                </span>
               </motion.div>
             ))}
           </AnimatePresence>
@@ -710,18 +971,30 @@ function RecentCard({
 
 function SaveFolderCard({
   saveDir,
+  treeUri,
+  treeName,
   platform,
   span,
   narrow,
   phone,
 }: {
   saveDir: string;
+  treeUri: string;
+  treeName: string;
   platform: string;
   span?: Span;
   narrow?: boolean;
   phone?: boolean;
 }) {
   const oneRow = narrow && !!span;
+  const android = platform === "android";
+  const label = android
+    ? treeUri
+      ? treeName || "Chosen folder"
+      : saveDir === GALLERY_SAVE || saveDir === DOWNLOADS_SAVE || !saveDir
+        ? saveDir === GALLERY_SAVE ? "Gallery" : saveDir === DOWNLOADS_SAVE ? "Download/Keepsake" : "App folder"
+        : saveDir
+    : saveDir || "System Downloads folder";
   return (
     <Card
       span={span}
@@ -734,13 +1007,26 @@ function SaveFolderCard({
         <span className="grid size-9 shrink-0 place-items-center rounded-[12px_12px_12px_4px] bg-accent-soft text-accent">
           <Icon name="folder" size={18} />
         </span>
-        <span className="selectable min-w-0 flex-1 truncate font-mono text-[12px] text-fg-2" title={saveDir || "System Downloads folder"}>
-          {saveDir || (platform === "android" ? "App files folder" : "System Downloads folder")}
+        <span className="selectable min-w-0 flex-1 truncate font-mono text-[12px] text-fg-2" title={label}>
+          {label}
         </span>
         <Button
           size={phone ? "lg" : "sm"}
           className={phone ? "!px-4" : ""}
           onClick={async () => {
+            if (android) {
+              try {
+                const r = await pickAndroidFolder(treeUri || undefined);
+                if (r?.uri) updateSettings({ saveTreeUri: r.uri, saveTreeName: r.name ?? "" });
+              } catch (e) {
+                notify({
+                  tone: "error",
+                  title: "Couldn't change folder",
+                  body: e instanceof Error ? e.message : String(e),
+                });
+              }
+              return;
+            }
             const dir = await pickFolder(saveDir);
             if (dir) updateSettings({ saveDir: dir });
           }}

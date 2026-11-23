@@ -14,7 +14,7 @@ export interface Toast {
 
 export type ToastInput = Omit<Toast, "id" | "duration"> & { duration?: number };
 
-const MAX_VISIBLE = 4;
+const MAX_VISIBLE = 3;
 const store = createStore<Toast[]>([]);
 let seq = 0;
 

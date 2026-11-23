@@ -1,6 +1,7 @@
 import { motion, useReducedMotion, type HTMLMotionProps } from "motion/react";
 import type { ReactNode } from "react";
 import { Icon, type IconName } from "./Icon";
+import { Spinner } from "./Loader";
 import { press, t } from "./motion";
 
 type Variant = "primary" | "secondary" | "ghost" | "danger" | "danger-outline";
@@ -54,10 +55,10 @@ export function Button({
       whileHover={off || reduced || !LIFTS[variant] ? undefined : { y: -1 }}
       whileTap={off ? undefined : press}
       transition={t.press}
-      className={`icon-host group inline-flex items-center justify-center gap-2 rounded-md text-[12px] font-medium leading-4 whitespace-nowrap transition-[background-color,border-color,color,box-shadow,filter] duration-150 disabled:opacity-45 disabled:pointer-events-none ${h} ${VARIANTS[variant]} ${className}`}
+      className={`hit icon-host group inline-flex items-center justify-center gap-2 rounded-md text-[12px] font-medium leading-4 whitespace-nowrap transition-[background-color,border-color,color,box-shadow,filter] duration-150 disabled:opacity-45 disabled:pointer-events-none ${h} ${VARIANTS[variant]} ${className}`}
       {...rest}
     >
-      {loading ? <span className="spinner" aria-hidden="true" /> : icon ? <Icon name={icon} size={16} animated /> : null}
+      {loading ? <Spinner size={14} className="" decorative /> : icon ? <Icon name={icon} size={16} animated /> : null}
       {children}
     </motion.button>
   );
@@ -84,7 +85,7 @@ export function IconButton({
       whileTap={rest.disabled ? undefined : press}
       transition={t.press}
       style={{ width: size, height: size }}
-      className={`icon-host group inline-flex shrink-0 items-center justify-center rounded-md transition-colors duration-150 disabled:opacity-45 disabled:pointer-events-none ${
+      className={`hit icon-host group inline-flex shrink-0 items-center justify-center rounded-md transition-colors duration-150 disabled:opacity-45 disabled:pointer-events-none ${
         active ? "bg-accent-soft text-accent" : "text-fg-2 hover:bg-accent-soft hover:text-fg"
       } ${className}`}
       {...rest}

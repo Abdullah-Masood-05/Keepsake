@@ -2,6 +2,9 @@ import type { LibraryItem } from "./models";
 import { loadLibrary, saveLibrary } from "./persist";
 import { createStore, useStore } from "./store";
 
+/** History cap, newest kept. Matches what persist.saveLibrary writes so memory and disk agree. */
+export const LIBRARY_LIMIT = 2000;
+
 export const libraryStore = createStore<LibraryItem[]>([]);
 
 let ready = false;
@@ -13,12 +16,12 @@ export async function initLibrary(): Promise<void> {
   const items = await loadLibrary();
   const sorted = items.slice();
   sorted.sort((a, b) => b.date - a.date);
-  libraryStore.set(sorted);
+  libraryStore.set(sorted.slice(0, LIBRARY_LIMIT));
   ready = true;
 }
 
 export function addLibraryItem(item: LibraryItem) {
-  libraryStore.set((prev) => [item, ...prev.filter((i) => i.id !== item.id)]);
+  libraryStore.set((prev) => [item, ...prev.filter((i) => i.id !== item.id)].slice(0, LIBRARY_LIMIT));
 }
 
 export function removeLibraryItem(id: string) {
