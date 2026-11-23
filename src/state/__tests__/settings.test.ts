@@ -40,7 +40,7 @@ describe("migrateSettings", () => {
     const s = migrateSettings({ saveDir: "" }, false);
     expect(s.saveDir).toBe("");
     expect(s.settingsVersion).toBe(SETTINGS_VERSION);
-    expect(migrateSettings({ saveDir: "D:\Videos" }, false).saveDir).toBe("D:\Videos");
+    expect(migrateSettings({ saveDir: "D:\\Videos" }, false).saveDir).toBe("D:\\Videos");
   });
 
   test("other settings survive the migration", () => {
