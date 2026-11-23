@@ -318,8 +318,9 @@ export function SettingsPage({ phone, onSupportedSites }: { phone: boolean; onSu
         narrow={narrow}
         className={cardPad}
         title="Components"
+        wrapHeader={phone}
         action={
-          <div className="flex shrink-0 items-center gap-1">
+          <div className="flex max-w-full min-w-0 flex-wrap items-center gap-1">
             <Button size="sm" variant="ghost" icon="copy" className="shrink-0" onClick={() => void copyDiagnostics()}>
               Copy diagnostics
             </Button>
@@ -366,7 +367,9 @@ export function SettingsPage({ phone, onSupportedSites }: { phone: boolean; onSu
                   ] as const
                 ).map(([label, value]) => (
                   <div key={label} className="flex min-w-0 items-baseline gap-2">
-                    <dt className="w-24 shrink-0 text-fg-2">{label}</dt>
+                    <dt className="w-24 max-w-[45%] shrink-0 truncate text-fg-2" title={label}>
+                      {label}
+                    </dt>
                     <dd
                       className={`min-w-0 truncate font-mono text-[12px] ${value ? "text-fg-2" : "text-danger"}`}
                       title={value ?? "missing"}
@@ -376,7 +379,9 @@ export function SettingsPage({ phone, onSupportedSites }: { phone: boolean; onSu
                   </div>
                 ))}
                 <div className="flex min-w-0 items-baseline gap-2">
-                  <dt className="w-24 shrink-0 text-fg-2">Self-contained</dt>
+                  <dt className="w-24 max-w-[45%] shrink-0 truncate text-fg-2" title="Self-contained">
+                    Self-contained
+                  </dt>
                   <dd
                     className={`min-w-0 truncate font-mono text-[12px] ${ytdlp.ready ? "text-fg-2" : "text-danger"}`}
                     title={ytdlp.problems.join(", ")}

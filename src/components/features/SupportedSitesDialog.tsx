@@ -91,7 +91,7 @@ export function SupportedSitesDialog({
         />
       </label>
       {list.length === 0 ? (
-        <p className="py-6 text-center text-fg-2">No matches for "{q}"</p>
+        <p className="py-6 text-center break-words text-fg-2">No matches for "{q}"</p>
       ) : (
         <ul className="grid min-w-0 grid-cols-1 gap-x-4 min-[380px]:grid-cols-2">
           {list.map((s, i) => (

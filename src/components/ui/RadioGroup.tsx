@@ -101,13 +101,24 @@ export function RadioGroup<T extends string>({
             }`}
           >
             {o.art}
-            <span className="flex w-full min-w-0 items-center gap-2">
+            <span className={`flex w-full min-w-0 items-center gap-2 ${compact ? "flex-col items-start gap-1.5" : ""}`}>
               {o.icon && <Glyph icon={o.icon} size={15} box={28} on={on} />}
-              <span className="min-w-0 flex-1">
-                <span className={`block truncate text-[12px] font-semibold ${on ? "text-fg" : "text-fg-2 group-hover:text-fg"}`}>
+              {/* Compact tiles (phones) stack the dial under the text so narrow columns keep their words. */}
+              <span className={compact ? "w-full min-w-0" : "min-w-0 flex-1"}>
+                <span
+                  title={o.label}
+                  className={`block truncate text-[12px] font-semibold ${on ? "text-fg" : "text-fg-2 group-hover:text-fg"}`}
+                >
                   {o.label}
                 </span>
-                {o.description && <span className="block truncate text-[11px] leading-[14px] text-fg-3">{o.description}</span>}
+                {o.description && (
+                  <span
+                    title={o.description}
+                    className={`block text-[11px] leading-[14px] text-fg-3 ${compact ? "break-words" : "truncate"}`}
+                  >
+                    {o.description}
+                  </span>
+                )}
               </span>
               {/* The dial: a fixed ring with the shared bead springing between tiles. */}
               <span

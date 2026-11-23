@@ -18,6 +18,8 @@ interface CardProps extends Omit<HTMLMotionProps<"section">, "title" | "children
   narrow?: boolean;
   children?: ReactNode;
   bodyClassName?: string;
+  /** Let the header wrap (title over action) when the action row is wider than the card. */
+  wrapHeader?: boolean;
 }
 
 export function spanStyle(span: Span | undefined, narrow: boolean | undefined): CSSProperties {
@@ -35,6 +37,7 @@ export function Card({
   narrow,
   className = "",
   bodyClassName = "",
+  wrapHeader,
   style,
   children,
   ...rest
@@ -52,7 +55,13 @@ export function Card({
       {...rest}
     >
       {(title || action) && (
-        <header className="mb-3 flex h-7 shrink-0 items-center justify-between gap-2">
+        <header
+          className={
+            wrapHeader
+              ? "mb-3 flex min-h-7 min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-2"
+              : "mb-3 flex h-7 shrink-0 items-center justify-between gap-2"
+          }
+        >
           <h2 className="truncate text-[15px] leading-[22px] font-semibold">{title}</h2>
           {action}
         </header>

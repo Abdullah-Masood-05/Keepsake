@@ -109,7 +109,7 @@ export function Dialog({
               className={`flex shrink-0 items-start gap-3 ${pad} ${phone ? (sheet ? "pt-1 pr-2" : "pt-3 pr-2") : "pt-5"} ${fullScreen ? "flex-row-reverse justify-end" : ""}`}
             >
               <div className={`min-w-0 flex-1 ${phone ? "pt-[13px]" : ""}`}>
-                <h2 className={`text-[15px] leading-[22px] font-semibold ${phone ? "line-clamp-2 break-words" : ""}`}>
+                <h2 className={`break-words text-[15px] leading-[22px] font-semibold ${phone ? "line-clamp-2" : ""}`}>
                   {title}
                 </h2>
                 {description && <p className="mt-1 text-fg-2">{description}</p>}
