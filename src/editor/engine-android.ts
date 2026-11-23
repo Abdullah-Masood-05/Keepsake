@@ -471,8 +471,6 @@ async function exportVideo(
     // Save the file this module asked Media3 to write (outPath), not a re-spelled path: the plugin's reply is the
     // canonical form of the same file (e.g. /data/data vs /data/user/0), and stage checks compare against `stage`.
     staged = { key, stage, src: outPath, fileName: baseOf(outPath), mime: "video/mp4", kind: "video", inputUri: uri };
-  } catch (e) {
-    throw e;
   } finally {
     signal?.removeEventListener("abort", sendCancel);
     await listener?.unregister().catch(() => undefined);

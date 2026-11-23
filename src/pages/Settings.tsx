@@ -43,6 +43,16 @@ const copyDiagnostics = async () => {
   notify({ tone: "success", title: "Diagnostics copied", body: "Paste them into your bug report." });
 };
 
+/** Pick an Android folder (SAF tree) and hand its URI and name to `apply`. */
+const chooseFolder = async (current: string, apply: (uri: string, name: string) => void) => {
+  try {
+    const r = (await pickAndroidFolder(current || undefined)) as { uri?: string | null; name?: string | null } | null;
+    if (r?.uri) apply(r.uri, r.name ?? "");
+  } catch (e) {
+    notify({ tone: "error", title: "Couldn't choose folder", body: e instanceof Error ? e.message : String(e) });
+  }
+};
+
 export function SettingsPage({ phone, onSupportedSites }: { phone: boolean; onSupportedSites: () => void }) {
   const s = useSettings((x) => x);
   const bins = useBinaries();
@@ -77,14 +87,6 @@ export function SettingsPage({ phone, onSupportedSites }: { phone: boolean; onSu
       setStorage({ granted: r.granted, permanentlyDenied: r.permanentlyDenied });
     } catch (e) {
       notify({ tone: "error", title: "Couldn't ask for storage access", body: e instanceof Error ? e.message : String(e) });
-    }
-  };
-  const chooseFolder = async (current: string, apply: (uri: string, name: string) => void) => {
-    try {
-      const r = (await pickAndroidFolder(current || undefined)) as { uri?: string | null; name?: string | null } | null;
-      if (r?.uri) apply(r.uri, r.name ?? "");
-    } catch (e) {
-      notify({ tone: "error", title: "Couldn't choose folder", body: e instanceof Error ? e.message : String(e) });
     }
   };
   const [ytdlp, setYtdlp] = useState<YtdlpStatus | null | undefined>(undefined);
