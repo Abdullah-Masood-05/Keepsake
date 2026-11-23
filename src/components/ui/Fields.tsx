@@ -54,9 +54,10 @@ export function FieldRow({
     <div className="flex min-h-12 flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-line py-2 last:border-b-0">
       <div className="min-w-0 flex-1 basis-40">
         <div className="text-[13px] font-medium">{label}</div>
-        {hint && <div className="text-[11px] leading-[14px] text-fg-2">{hint}</div>}
+        {hint && <div className="break-words text-[11px] leading-[14px] text-fg-2">{hint}</div>}
       </div>
-      <div className="flex max-w-full min-w-0 shrink-0 items-center gap-2">{children}</div>
+      {/* The control wraps its own buttons (choice rows) instead of spilling past the card edge. */}
+      <div className="flex max-w-full min-w-0 flex-wrap items-center gap-2">{children}</div>
     </div>
   );
 }
