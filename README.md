@@ -267,8 +267,7 @@ Testing on a device: the Android phone checklist is in [docs/ANDROID_SELFCONTAIN
 bun run android:init     # once; generates src-tauri/gen/android (git-ignored)
 bash scripts/android-patch-gradle.sh   # after every android:init; adds Chaquopy (needs Python 3.12 on PATH)
                                        # and turns on native-lib extraction for the bundled executables
-bash scripts/build-android-ffmpeg.sh   # builds libffmpeg.so with the NDK (slow the first time; see below)
-bash scripts/fetch-android-binaries.sh # downloads libqjs.so, checks every SHA-256 (Windows: scripts/fetch-android-binaries.ps1)
+bash scripts/fetch-android-binaries.sh # downloads libqjs.so and libffmpeg.so, checks every SHA-256 (Windows: scripts/fetch-android-binaries.ps1)
 bun run build:android    # arm64 APK (the default build)
 ```
 
@@ -277,7 +276,7 @@ The two Android executables are **not committed**. They go to `src-tauri/plugins
 | File | What | Source |
 |---|---|---|
 | `libqjs.so` | QuickJS-NG v0.18.0 | Official release asset `qjs-linux-aarch64`, renamed, SHA-256 pinned. [`scripts/build-android-qjs.sh`](scripts/build-android-qjs.sh) is the NDK build fallback if that binary does not run on Android |
-| `libffmpeg.so` | FFmpeg 7.1.1, minimal LGPL configuration with LAME 3.100 and Opus 1.5.2 | Built from pinned source tarballs by `scripts/build-android-ffmpeg.sh` with the NDK (`27.2.12479018` in CI) |
+| `libffmpeg.so` | FFmpeg 7.1.1, minimal LGPL configuration with LAME 3.100 and Opus 1.5.2 | Prebuilt, downloaded and SHA-256-verified from the [ffmpeg-android-minimal-build v1.0.0 release](https://github.com/Abdullah-Masood-05/ffmpeg-android-minimal-build/releases/tag/v1.0.0); its corresponding source is that release's `libffmpeg-android-sources.tar.gz` |
 
 Android only lets an app run programs from its native-library folder, so both are packaged as `lib*.so` files and extracted at install time. yt-dlp-ejs 0.8.0 is a pip pin in the plugin's `build.gradle.kts` and must change together with the yt-dlp pin. CI runs the same steps and then checks that both libraries are in the APK and that native-lib extraction is on. The exact order of these steps is in the `android` job of [`.github/workflows/build.yml`](.github/workflows/build.yml), which is authoritative if it differs from the list above.
 
@@ -306,9 +305,8 @@ Release APKs must be signed before Android installs them. Follow [Tauri's Androi
 | `check` | `ubuntu-22.04` | Typecheck, lint, `bun test`, pytest (Android Python bridge), front-end build, `cargo test` | none |
 | `windows` | `windows-latest` (MSVC) | `tauri build --bundles nsis`, then `scripts/verify-bundle.ps1` (checks the bundled sidecars) | `keepsake-windows-nsis` |
 | `linux` | `ubuntu-22.04` | `tauri build --bundles deb,rpm,appimage`, then `scripts/verify-bundle.sh` (checks the bundled sidecars) | `keepsake-linux-deb`, `keepsake-linux-rpm`, `keepsake-linux-appimage` |
-| `android-ffmpeg` | `ubuntu-latest` (NDK) | Builds `libffmpeg.so` (FFmpeg, LAME, Opus) | `android-ffmpeg-arm64`; on tags also `keepsake-android-ffmpeg-sources` |
 | `android` | `ubuntu-latest` (JDK 17, SDK, NDK) | `tauri android init --ci`, then an arm64 APK build and APK checks (native libs, extractNativeLibs, 16 KiB alignment, yt-dlp-ejs) | `keepsake-android-apk` |
-| `release` | `ubuntu-latest` | Runs on `v*` tags only, after the builds | Draft GitHub Release with every installer |
+| `release` | `ubuntu-latest` | Runs on `v*` tags only, after the builds | Draft GitHub Release with every installer, plus `libffmpeg-android-sources.tar.gz` (LGPL source of `libffmpeg.so`, SHA-256-verified) |
 
 The `windows` and `linux` jobs were switched off earlier (`if: false`, "Android-only builds for now") and are enabled again; they run on every push to `main` and every pull request, which costs CI minutes.
 

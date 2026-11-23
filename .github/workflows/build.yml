@@ -6,16 +6,13 @@
 #                   if keepsake-yt-dlp/-ffmpeg/-qjs are not next to the app or do not run (needs: check)
 #   linux           deb, rpm, AppImage, then scripts/verify-bundle.sh unpacks each package and
 #                   fails if a sidecar is missing from usr/bin or does not run    (needs: check)
-#   android-ffmpeg  libffmpeg.so (FFmpeg minimal LGPL, NDK arm64) built by
-#                   scripts/build-android-ffmpeg.sh, cached on the script + lock file hash.
-#                   Runs in parallel with check.
 #   android         arm64-v8a split APK, test-signed, Chaquopy + yt-dlp + yt-dlp-ejs, bundled
-#                   libqjs.so + libffmpeg.so, APK verification  (needs: check, android-ffmpeg)
-#                   Still runs when android-ffmpeg fails: the APK is then built WITHOUT ffmpeg
-#                   (loud error annotation + job summary), so a phone test build always exists.
-#   release         draft GitHub Release, v* tags only  (needs: windows, linux, android,
-#                   android-ffmpeg; never runs if one failed). Includes the FFmpeg/LAME/Opus source
-#                   tarballs (LGPL).
+#                   libqjs.so + libffmpeg.so, APK verification  (needs: check). libffmpeg.so is
+#                   downloaded and sha256-verified by scripts/fetch-android-binaries.sh from the
+#                   ffmpeg-android-minimal-build release pinned in scripts/binaries.lock.json.
+#   release         draft GitHub Release, v* tags only  (needs: windows, linux, android; never
+#                   runs if one failed). Includes the FFmpeg/LAME/Opus corresponding-source tarball
+#                   (LGPL) from the same ffmpeg-android-minimal-build release, sha256-verified.
 #
 # windows/linux were switched off (`if: false`, commit 9c0697a "Android-only builds for now") by
 # choice, not because a step was broken. They are back on: the Windows installer is the build the
@@ -339,108 +336,6 @@ jobs:
       - name: Verify bundled sidecars in every package
         run: bash scripts/verify-bundle.sh src-tauri/target/release/bundle x86_64-unknown-linux-gnu
 
-  # FFmpeg 7.1.1 minimal LGPL (+ LAME, Opus), cross-built with the NDK for arm64-v8a as libffmpeg.so.
-  # Cached on the build recipe + lock file (exact key, no restore-keys: a changed recipe always
-  # rebuilds). The cache dir also keeps the sha256-verified source tarballs, which v* tags attach
-  # to the release (LGPL corresponding source). Runs in parallel with `check`.
-  # A failure here is red and blocks a release, but `android` still builds an APK without ffmpeg.
-  android-ffmpeg:
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    defaults:
-      run:
-        shell: bash
-        working-directory: ${{ env.KEEPSAKE_DIR }}
-    env:
-      NDK_VERSION: "27.2.12479018"
-      # Absolute, so the build script and actions/cache agree on it.
-      KEEPSAKE_ANDROID_CACHE: ${{ github.workspace }}/.android-native-cache
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Cache libffmpeg.so build
-        id: ffcache
-        uses: actions/cache@v4
-        with:
-          path: ${{ github.workspace }}/.android-native-cache
-          key: android-ffmpeg-ndk${{ env.NDK_VERSION }}-${{ hashFiles('scripts/build-android-ffmpeg.sh', 'scripts/binaries.lock.json') }}
-
-      - name: Install Android NDK
-        if: ${{ steps.ffcache.outputs.cache-hit != 'true' }}
-        run: |
-          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
-          SDKMANAGER="$SDK/cmdline-tools/latest/bin/sdkmanager"
-          if [ ! -x "$SDKMANAGER" ]; then SDKMANAGER="$(command -v sdkmanager)"; fi
-          yes | "$SDKMANAGER" --licenses > /dev/null || true
-          "$SDKMANAGER" --install "ndk;$NDK_VERSION"
-          echo "ANDROID_NDK_HOME=$SDK/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
-          echo "NDK_HOME=$SDK/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
-
-      - name: Build libffmpeg.so (scripts/build-android-ffmpeg.sh)
-        if: ${{ steps.ffcache.outputs.cache-hit != 'true' }}
-        run: bash scripts/build-android-ffmpeg.sh
-
-      # Collects the output into one place, whether the script left it in the cache dir or in
-      # jniLibs, and checks it is an aarch64 ELF before anyone downloads it.
-      - name: Collect and check libffmpeg.so
-        run: |
-          JNI=src-tauri/plugins/keepsake-media/android/src/main/jniLibs/arm64-v8a
-          OUT="$RUNNER_TEMP/ffmpeg-out"
-          mkdir -p "$OUT" "$KEEPSAKE_ANDROID_CACHE"
-          if [ -f "$JNI/libffmpeg.so" ]; then cp "$JNI/libffmpeg.so" "$KEEPSAKE_ANDROID_CACHE/libffmpeg.so"; fi
-          [ -f "$KEEPSAKE_ANDROID_CACHE/libffmpeg.so" ] || { echo "::error::build-android-ffmpeg.sh produced no libffmpeg.so"; exit 1; }
-          cp "$KEEPSAKE_ANDROID_CACHE/libffmpeg.so" "$OUT/libffmpeg.so"
-          python3 - "$OUT/libffmpeg.so" <<'PY'
-          import struct, sys
-          b = open(sys.argv[1], "rb").read(64)
-          if b[:4] != b"\x7fELF" or b[4] != 2 or struct.unpack_from("<H", b, 18)[0] != 183:
-              sys.exit("::error::libffmpeg.so is not a 64-bit aarch64 ELF")
-          PY
-          ls -l "$OUT" "$KEEPSAKE_ANDROID_CACHE" "$KEEPSAKE_ANDROID_CACHE/sources" || true
-          {
-            echo "### Android ffmpeg"
-            echo ""
-            echo "libffmpeg.so: $(stat -c %s "$OUT/libffmpeg.so") bytes, sha256 \`$(sha256sum "$OUT/libffmpeg.so" | cut -d' ' -f1)\` (cache hit: ${{ steps.ffcache.outputs.cache-hit == 'true' }})"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: android-ffmpeg-arm64
-          path: ${{ runner.temp }}/ffmpeg-out/libffmpeg.so
-          if-no-files-found: error
-          retention-days: 14
-
-      # LGPL-2.1 section 6: the exact FFmpeg/LAME/Opus sources ship next to the APK on the release.
-      # The `keepsake-` prefix makes the release job pick this artifact up.
-      - name: Stage source tarballs for the release
-        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
-        run: |
-          S="$KEEPSAKE_ANDROID_CACHE/sources"
-          ls -l "$S"
-          ls -1 "$S" > "$RUNNER_TEMP/sources.txt"
-          for want in ffmpeg lame opus; do
-            grep -qi "^$want" "$RUNNER_TEMP/sources.txt" || { echo "::error::no $want source tarball in $S"; exit 1; }
-          done
-          mkdir -p "$RUNNER_TEMP/ffmpeg-sources"
-          cp "$S"/* "$RUNNER_TEMP/ffmpeg-sources/"
-
-      - uses: actions/upload-artifact@v4
-        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
-        with:
-          name: keepsake-android-ffmpeg-sources
-          path: ${{ runner.temp }}/ffmpeg-sources/*
-          if-no-files-found: error
-
-      - name: Report ffmpeg failure
-        if: ${{ failure() }}
-        run: |
-          echo "::error title=android-ffmpeg failed::libffmpeg.so was not built. The android job still builds an APK WITHOUT ffmpeg (test only); releases are blocked."
-          {
-            echo "## :x: libffmpeg.so build FAILED"
-            echo ""
-            echo "The APK from this run has no ffmpeg (legacy yt-dlp route only). Releases are blocked until this job is green."
-          } >> "$GITHUB_STEP_SUMMARY"
-
   # No desktop fetch-binaries here: tauri.android.conf.json sets "externalBin": [] (no sidecars).
   # The Android executables (libqjs.so, libffmpeg.so) are jniLibs of the keepsake-media plugin
   # instead (plan 11, section 3.1).
@@ -448,10 +343,7 @@ jobs:
   # in this job, the same way docker/android/build.sh does without /keys. TEST ONLY: each run has
   # a new key, so a newer CI APK will not install over an older one without uninstalling first.
   android:
-    needs: [check, android-ffmpeg]
-    # Also runs when android-ffmpeg failed, so a phone-testable APK (without ffmpeg) still comes
-    # out. The ffmpeg job is then red, and this job adds an error annotation and summary banner.
-    if: ${{ !cancelled() && needs.check.result == 'success' }}
+    needs: check
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -539,44 +431,21 @@ jobs:
           done
           echo "launcher icons copied and verified"
 
-      # Before the fetch script, which keeps a libffmpeg.so already in jniLibs when the lock has
-      # no url for it.
-      - name: Download libffmpeg.so (android-ffmpeg job)
-        if: ${{ needs.android-ffmpeg.result == 'success' }}
-        uses: actions/download-artifact@v4
-        with:
-          name: android-ffmpeg-arm64
-          path: ${{ env.KEEPSAKE_DIR }}/${{ env.JNI_DIR }}
-
       # QuickJS-NG (yt-dlp's JS runtime for the EJS solver) as libqjs.so, sha256-pinned in
-      # scripts/binaries.lock.json. libqjs.so is required; a missing libffmpeg.so is only reported.
-      - name: Fetch Android binaries (libqjs.so, sha256-verified)
+      # scripts/binaries.lock.json. libffmpeg.so is downloaded from the ffmpeg-android-minimal-build
+      # release (pinned url + sha256 in the same file). Both are required: a failed download or a
+      # hash mismatch fails the job.
+      - name: Fetch Android binaries (libqjs.so, libffmpeg.so, sha256-verified)
         env:
-          KEEPSAKE_ANDROID_REQUIRE: libqjs.so
+          KEEPSAKE_ANDROID_REQUIRE: libqjs.so libffmpeg.so
         run: bash scripts/fetch-android-binaries.sh
 
-      # libqjs.so is required (hard fail). A missing libffmpeg.so is LOUD but not fatal, so the
-      # APK still builds for phone testing; the app then reports the full route as not ready.
       - name: Check bundled executables (jniLibs)
-        env:
-          FFMPEG_JOB_RESULT: ${{ needs.android-ffmpeg.result }}
         run: |
           ls -l "$JNI_DIR"
-          # Artifacts do not keep the exec bit.
           chmod 755 "$JNI_DIR"/*.so
           [ -f "$JNI_DIR/libqjs.so" ] || { echo "::error::libqjs.so missing after fetch-android-binaries.sh"; exit 1; }
-          if [ -f "$JNI_DIR/libffmpeg.so" ]; then
-            echo "HAVE_FFMPEG=1" >> "$GITHUB_ENV"
-          else
-            echo "HAVE_FFMPEG=0" >> "$GITHUB_ENV"
-            echo "::error title=APK built WITHOUT libffmpeg.so::android-ffmpeg job result: $FFMPEG_JOB_RESULT. This APK has no ffmpeg: yt-dlp cannot merge, and the self-contained route reports not ready (legacy fallback only). Test build only; release is blocked."
-            {
-              echo "## :warning: APK built WITHOUT libffmpeg.so"
-              echo ""
-              echo "The \`android-ffmpeg\` job result was **$FFMPEG_JOB_RESULT**. This APK falls back to the legacy yt-dlp route. Fix the ffmpeg build before tagging a release."
-              echo ""
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
+          [ -f "$JNI_DIR/libffmpeg.so" ] || { echo "::error::libffmpeg.so missing after fetch-android-binaries.sh"; exit 1; }
           # ELF, aarch64 (e_machine 183) is required. 16 KiB LOAD alignment is warned about only:
           # the libs are extracted at install (legacy packaging), so it matters for 16 KiB-page devices.
           for f in "$JNI_DIR"/*.so; do
@@ -674,8 +543,8 @@ jobs:
           path: ${{ env.KEEPSAKE_DIR }}/apk-out/*.apk
           if-no-files-found: error
 
-      # Plan 11 WP-I. Any miss fails the job (and so blocks a release). Exceptions: libffmpeg.so
-      # when HAVE_FFMPEG=0 (already reported above), and the Chaquopy asset path guess.
+      # Plan 11 WP-I. Any miss fails the job (and so blocks a release). The only exception is the
+      # Chaquopy asset path guess.
       - name: Verify APK (native libs, extractNativeLibs, 16 KiB alignment, yt-dlp-ejs)
         run: |
           BT="$ANDROID_HOME/build-tools/$BUILD_TOOLS"
@@ -687,13 +556,8 @@ jobs:
             unzip -v "$apk" 'lib/arm64-v8a/*' > "$RUNNER_TEMP/libs.txt" || true
             cat "$RUNNER_TEMP/libs.txt"
             grep -q 'lib/arm64-v8a/libqjs\.so$' "$RUNNER_TEMP/libs.txt" || { echo "::error::$apk: lib/arm64-v8a/libqjs.so missing"; exit 1; }
-            if grep -q 'lib/arm64-v8a/libffmpeg\.so$' "$RUNNER_TEMP/libs.txt"; then
-              echo "libffmpeg.so present"
-            elif [ "$HAVE_FFMPEG" = 1 ]; then
-              echo "::error::$apk: lib/arm64-v8a/libffmpeg.so missing although it was in jniLibs"; exit 1
-            else
-              echo "::warning::$apk: no libffmpeg.so (built without ffmpeg, see the error above)"
-            fi
+            grep -q 'lib/arm64-v8a/libffmpeg\.so$' "$RUNNER_TEMP/libs.txt" || { echo "::error::$apk: lib/arm64-v8a/libffmpeg.so missing"; exit 1; }
+            echo "libffmpeg.so present"
             # 2. extractNativeLibs must not be false (exec is only allowed from nativeLibraryDir).
             "$BT/aapt2" dump xmltree --file AndroidManifest.xml "$apk" > "$RUNNER_TEMP/manifest.txt"
             line="$(grep -m1 'extractNativeLibs' "$RUNNER_TEMP/manifest.txt" || true)"
@@ -740,10 +604,9 @@ jobs:
   # platform artifact into a DRAFT GitHub Release, so you review it before publishing.
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    # Every platform must be green (including the bundled-sidecar checks). android-ffmpeg is listed
-    # so a release never ships an APK without ffmpeg; its keepsake-android-ffmpeg-sources artifact
-    # (LGPL sources) is attached.
-    needs: [windows, linux, android, android-ffmpeg]
+    # Every platform must be green (including the bundled-sidecar checks). The LGPL corresponding
+    # source of libffmpeg.so is downloaded from its ffmpeg-android-minimal-build release (below).
+    needs: [windows, linux, android]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -753,6 +616,24 @@ jobs:
           pattern: keepsake-*
           path: release-files
           merge-multiple: true
+
+      # LGPL-2.1 section 6: the exact FFmpeg/LAME/Opus sources behind libffmpeg.so ship next to the
+      # APK. URL and sha256 come from scripts/binaries.lock.json (libffmpeg.so.sourcesUrl/sourcesSha256).
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/binaries.lock.json
+          path: lock-src
+
+      - name: Download LGPL corresponding source of libffmpeg.so (sha256-verified)
+        run: |
+          read -r URL SHA < <(python3 - lock-src/scripts/binaries.lock.json <<'PY'
+          import json, sys
+          e = json.load(open(sys.argv[1]))["android"]["libs"]["libffmpeg.so"]
+          print(e["sourcesUrl"], e["sourcesSha256"])
+          PY
+          )
+          curl -fsSL --retry 3 -o release-files/libffmpeg-android-sources.tar.gz "$URL"
+          echo "$SHA  release-files/libffmpeg-android-sources.tar.gz" | sha256sum -c -
 
       - name: List release files
         run: |
