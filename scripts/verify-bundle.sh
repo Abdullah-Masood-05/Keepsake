@@ -110,7 +110,17 @@ for pkg in "${rpms[@]}"; do
   i=$((i + 1)); d="$WORK/rpm$i"; mkdir -p "$d"
   echo "=== $pkg"
   abs="$(cd "$(dirname "$pkg")" && pwd)/$(basename "$pkg")"
-  (cd "$d" && rpm2cpio "$abs" | cpio -idm --quiet)
+  # rpm2cpio writes the full payload but exits 1 when run as a non-root user (the GitHub
+  # runner), which aborted this script under pipefail. Keep its output, ignore that status,
+  # and let check_tree's hash and run checks decide whether the package is good.
+  cpio_file="$WORK/rpm$i.cpio"
+  rc=0; rpm2cpio "$abs" > "$cpio_file" || rc=$?
+  [ "$rc" = 0 ] || echo "note: rpm2cpio exited $rc; verifying the extracted payload instead"
+  if [ -s "$cpio_file" ]; then
+    (cd "$d" && cpio -idm --quiet < "$cpio_file") || err "rpm $(basename "$pkg"): cpio could not unpack the payload"
+  else
+    err "rpm $(basename "$pkg"): rpm2cpio produced no payload"
+  fi
   find "$d/usr/bin" -maxdepth 1 -type f 2>/dev/null || true
   check_tree "rpm $(basename "$pkg")" "$d" 1
 done
