@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Places the Android (arm64-v8a) executables that the in-process yt-dlp runs (libqjs.so = QuickJS-NG,
-# libffmpeg.so = minimal LGPL FFmpeg) into the keepsake-media plugin's jniLibs directory, as listed under
+# libffmpeg.so = minimal LGPL FFmpeg, downloaded from the
+# ffmpeg-android-minimal-build release pinned in the lock, sha256-verified) into the keepsake-media plugin's jniLibs directory, as listed under
 # "android" in scripts/binaries.lock.json. AGP packages them as lib/arm64-v8a/lib*.so and the package
 # manager extracts them to nativeLibraryDir, the one app-owned place Android lets an app execute from.
 #
@@ -11,7 +12,7 @@
 #      copy from the cache; an adjacent <name>.sha256 ("<hex>  <name>"), if present, must match.
 #   2. listed in KEEPSAKE_ANDROID_USE_BUILT but no cache file: fail.
 #   3. the lock has a url: download (curl --retry 3), verify sha256 (and "bytes"), like fetch-binaries.sh.
-#   4. already in jniLibs (scripts/build-android-ffmpeg.sh writes libffmpeg.so straight there): keep it.
+#   4. already in jniLibs (no url in the lock): keep it.
 #   5. otherwise: fail if listed in KEEPSAKE_ANDROID_REQUIRE; else a LOUD warning (::error:: annotation
 #      plus the job summary) and exit 0. The APK still builds; the app reports ytdlp_status.ready=false.
 # Every placed file is chmod 755 and must be a 64-bit little-endian ELF with e_machine 183 (aarch64).
@@ -21,6 +22,7 @@
 #   KEEPSAKE_ANDROID_USE_BUILT  lib names to take from the cache (space/comma separated), e.g. "libqjs.so"
 #                               to use scripts/build-android-qjs.sh output instead of the release asset
 #   KEEPSAKE_ANDROID_REQUIRE    lib names whose absence fails the script, e.g. "libqjs.so libffmpeg.so"
+#                               (CI and docker/android/build.sh require both; a download or hash failure always fails)
 #   GITHUB_STEP_SUMMARY         when set (GitHub Actions), a table is appended to it
 # Needs: bash, curl, python3, sha256sum or shasum.
 set -euo pipefail

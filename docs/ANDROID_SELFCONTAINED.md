@@ -15,7 +15,7 @@ them. This route gives it all three:
 | yt-dlp 2026.10.26 | Chaquopy pip package, runs in the app process | Unlicense |
 | yt-dlp-ejs 0.8.0 (solver scripts) | Chaquopy pip package; must match yt-dlp's own pin | Unlicense AND MIT AND ISC |
 | QuickJS-NG v0.18.0 | `lib/arm64-v8a/libqjs.so`, a separate program | MIT |
-| FFmpeg 7.1.1 minimal LGPL build | `lib/arm64-v8a/libffmpeg.so`, a separate program | LGPL-2.1-or-later |
+| FFmpeg 7.1.1 minimal LGPL build ([ffmpeg-android-minimal-build v1.0.0](https://github.com/Abdullah-Masood-05/ffmpeg-android-minimal-build/releases/tag/v1.0.0), downloaded and sha256-verified; source: that release's `libffmpeg-android-sources.tar.gz`) | `lib/arm64-v8a/libffmpeg.so`, a separate program | LGPL-2.1-or-later |
 
 1. Android only lets an app execute files from its `nativeLibraryDir`, and the installer only places files there
    that are packaged as `lib/<abi>/lib*.so` with native-lib extraction on. So the two programs ship as

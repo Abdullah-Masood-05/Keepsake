@@ -25,10 +25,14 @@ FFMPEG-LGPL-2.1.txt
   Source code: tag n7.1.1 of https://github.com/FFmpeg/FFmpeg
                (release tarball: https://ffmpeg.org/releases/ffmpeg-7.1.1.tar.xz)
   Release tarball sha256: 733984395e0dbbe5c046abda2dc49a5544e7e0e1e2366bba849222ae9e3a03b1
-  Build script and configure flags: scripts/build-android-ffmpeg.sh in the
-  Keepsake repository (NDK cross-build, same LGPL configure flags as
-  https://github.com/Abdullah-Masood-05/ffmpeg-ytdl-minimal-build v1.1.0),
-  recorded in the "android" block of scripts/binaries.lock.json.
+  Build: libffmpeg.so is the prebuilt asset of
+  https://github.com/Abdullah-Masood-05/ffmpeg-android-minimal-build/releases/tag/v1.0.0
+  (NDK cross-build, same LGPL configure flags as
+  https://github.com/Abdullah-Masood-05/ffmpeg-ytdl-minimal-build v1.1.0).
+  Corresponding source (FFmpeg, LAME and Opus tarballs, build.sh,
+  sources.lock.json): that release's libffmpeg-android-sources.tar.gz
+  (sha256 5f956755cc4ca99aae7f156e33fcedb0408a57916ba25132323b9be41cb9295f),
+  also attached to every Keepsake release.
   You may replace libffmpeg.so with your own build of FFmpeg by rebuilding
   the APK with it.
 

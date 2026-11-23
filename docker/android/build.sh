@@ -6,7 +6,7 @@
 #   - Rust 1.90.0 with the aarch64-linux-android target
 #   - Bun 1.4.x (1.4.4 in the image)
 #   - rsync, perl, unzip, zipalign + apksigner + aapt2 (build-tools), keytool (JDK)
-#   - BUILD_FFMPEG=1 (optional): build libffmpeg.so via scripts/build-android-ffmpeg.sh (needs ANDROID_NDK_HOME); cached in /cache/android-native/<recipe hash>
+#   - network access to github.com: libffmpeg.so is downloaded (sha256-verified) from the ffmpeg-android-minimal-build release pinned in scripts/binaries.lock.json
 # Output: arm64-v8a split APK only (tauri android build --apk --split-per-abi --target aarch64).
 #   Set ALL_ABIS=1 to also build the universal APK and every split ABI.
 # Signing: release-signed only if a keystore is mounted at /keys; otherwise the APK is signed
@@ -115,24 +115,12 @@ collect() { # $1 = mode (universal|split)
 }
 
 JNI=src-tauri/plugins/keepsake-media/android/src/main/jniLibs/arm64-v8a
-# Same contract as CI: the build scripts write <cache>/libffmpeg.so (+ .sha256, sources/), and
-# fetch-android-binaries.sh copies it from there. Keyed on the recipe + lock, like the CI cache.
-FF_KEY=$(cat scripts/build-android-ffmpeg.sh scripts/binaries.lock.json | sha256sum | cut -d' ' -f1)
-export KEEPSAKE_ANDROID_CACHE=/cache/android-native/$FF_KEY
-mkdir -p "$JNI" "$KEEPSAKE_ANDROID_CACHE"
-if [[ ! -f "$JNI/libffmpeg.so" && ! -f "$KEEPSAKE_ANDROID_CACHE/libffmpeg.so" && "${BUILD_FFMPEG:-0}" == "1" ]]; then
-  log "Building libffmpeg.so (BUILD_FFMPEG=1, cache $KEEPSAKE_ANDROID_CACHE)"
-  bash scripts/build-android-ffmpeg.sh
-fi
+mkdir -p "$JNI"
 
+# libqjs.so and libffmpeg.so are both required: a failed download or a sha256 mismatch fails the build.
 log "Fetching Android binaries (sha256-verified)"
-KEEPSAKE_ANDROID_REQUIRE=libqjs.so bash scripts/fetch-android-binaries.sh
-
-if [[ -f "$JNI/libffmpeg.so" ]]; then HAVE_FFMPEG=1; else
-  HAVE_FFMPEG=0
-  echo "!!!!!!!! WARNING: $JNI/libffmpeg.so is missing (set BUILD_FFMPEG=1 to build it, or place a pre-built one there). !!!!!!!!"
-  echo "!!!!!!!! The APK will be built WITHOUT ffmpeg: the yt-dlp merge/full route will report not ready. !!!!!!!!"
-fi
+KEEPSAKE_ANDROID_REQUIRE="libqjs.so libffmpeg.so" bash scripts/fetch-android-binaries.sh
+[[ -f "$JNI/libffmpeg.so" ]] || { echo "$JNI/libffmpeg.so missing after fetch-android-binaries.sh" >&2; exit 1; }
 
 rm -f /out/*.apk
 if [[ "${ALL_ABIS:-0}" == "1" ]]; then
@@ -163,9 +151,7 @@ verify_apk() { # $1 = apk
   if [[ "$n" == *arm64* || "$n" == *universal* ]]; then
     unzip -l "$a" > "$t/list" || die "$n: cannot list"
     grep -q 'lib/arm64-v8a/libqjs\.so' "$t/list" || die "$n: lib/arm64-v8a/libqjs.so missing"
-    if [[ "$HAVE_FFMPEG" == 1 ]]; then
-      grep -q 'lib/arm64-v8a/libffmpeg\.so' "$t/list" || die "$n: lib/arm64-v8a/libffmpeg.so missing"
-    else echo "WARNING: $n has no libffmpeg.so (built without ffmpeg)"; fi
+    grep -q 'lib/arm64-v8a/libffmpeg\.so' "$t/list" || die "$n: lib/arm64-v8a/libffmpeg.so missing"
   fi
   line=$(aapt2 dump xmltree --file AndroidManifest.xml "$a" | grep extractNativeLibs | head -n1 || true)
   if [[ -z "$line" ]]; then echo "extractNativeLibs not set (platform default true)"

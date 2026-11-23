@@ -5,15 +5,15 @@
 #   powershell -ExecutionPolicy Bypass -File scripts\fetch-android-binaries.ps1 -UseBuilt libffmpeg.so -Require libffmpeg.so
 #
 # CI uses scripts/fetch-android-binaries.sh; this script is the Windows dev-parity twin.
-# libffmpeg.so is produced by scripts/build-android-ffmpeg.sh (Linux + Android NDK only), so
-# on Windows it normally comes only from a cache dir someone copied in (android.cacheDir).
+# libffmpeg.so is downloaded from the ffmpeg-android-minimal-build release pinned in the lock
+# (url + sha256); a hash or size mismatch throws.
 #
 # Per lib:
 #   - cache file present and (lock url empty or lib listed in -UseBuilt): copy from the cache
 #     dir; an adjacent <name>.sha256 file, if present, must match.
 #   - lib listed in -UseBuilt but no cache file: fail.
 #   - lock url present: download, verify sha256 (and "bytes" if set) like fetch-binaries.ps1.
-#   - already in jniLibs (e.g. written by build-android-ffmpeg.sh): keep it (ELF-checked).
+#   - already in jniLibs (no lock url): keep it (ELF-checked).
 #   - otherwise: fail if listed in -Require, else warn and continue.
 # Every placed file is checked to be a 64-bit little-endian aarch64 ELF.
 #
@@ -112,7 +112,10 @@ try {
     } elseif ($url -ne "") {
       $dl = Join-Path $tmp $name
       Write-Host "Downloading $name from $url"
-      Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $dl
+      for ($try = 1; ; $try++) {
+        try { Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $dl; break }
+        catch { if ($try -ge 3) { throw }; Start-Sleep -Seconds (2 * $try) }
+      }
       $got = (Get-FileHash -Algorithm SHA256 $dl).Hash.ToLower()
       $want = "$($entry.sha256)".Trim().ToLower()
 
@@ -136,7 +139,7 @@ try {
       Move-Item -Force $dl $dest
       $source = "release"
     } elseif (Test-Path -LiteralPath $dest) {
-      # Already placed by its build script (build-android-ffmpeg.sh writes straight into jniLibs).
+      # No url in the lock: keep what is already placed.
       Write-Host "${name}: keeping the copy already in $jni (no url in the lock, no cache file)"
       $source = "existing"
     } else {

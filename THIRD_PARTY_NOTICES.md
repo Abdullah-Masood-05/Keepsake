@@ -40,10 +40,12 @@ the Android video editor) are listed in `src-tauri/plugins/keepsake-media/androi
   later**. It contains LAME 3.100 (LGPL-2.0-or-later), libopus 1.5.2 (BSD-3-Clause) and zlib (Zlib licence).
 - Desktop build: [ffmpeg-ytdl-minimal-build](https://github.com/Abdullah-Masood-05/ffmpeg-ytdl-minimal-build)
   release `v1.1.0` (its `build.sh` at that tag is the build script).
-- Android build: [`scripts/build-android-ffmpeg.sh`](scripts/build-android-ffmpeg.sh) in this repository, run in
-  CI with the Android NDK, using the same LGPL configure flags as the desktop build. The recipe and the pinned
-  source hashes are recorded in the `android` block of [`scripts/binaries.lock.json`](scripts/binaries.lock.json).
-  If an Android release of ffmpeg-ytdl-minimal-build is used instead, the lock file names it.
+- Android build: [ffmpeg-android-minimal-build](https://github.com/Abdullah-Masood-05/ffmpeg-android-minimal-build/releases/tag/v1.0.0)
+  release `v1.0.0` (NDK r27c, arm64, API 24; same LGPL configure flags as the desktop build). `libffmpeg.so` is
+  its asset `libffmpeg-android-arm64-v8a.so`, downloaded and SHA-256-verified (`daaab5e31d0f466a7ff9354b7c9ac9ff31c5f7501269e01005f5bc9ff9bb31f3`)
+  against the `android` block of [`scripts/binaries.lock.json`](scripts/binaries.lock.json). The complete
+  corresponding source is that release's `libffmpeg-android-sources.tar.gz`
+  (`5f956755cc4ca99aae7f156e33fcedb0408a57916ba25132323b9be41cb9295f`): the FFmpeg, LAME and Opus tarballs, `build.sh` and `sources.lock.json`.
 - Corresponding source (SHA-256 as pinned in `scripts/binaries.lock.json`):
   - FFmpeg: <https://ffmpeg.org/releases/ffmpeg-7.1.1.tar.xz>
     (`733984395e0dbbe5c046abda2dc49a5544e7e0e1e2366bba849222ae9e3a03b1`; tag `n7.1.1` of <https://github.com/FFmpeg/FFmpeg>)
@@ -51,8 +53,8 @@ the Android video editor) are listed in `src-tauri/plugins/keepsake-media/androi
     (`ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e`)
   - Opus: <https://downloads.xiph.org/releases/opus/opus-1.5.2.tar.gz>
     (`65c1d2f78b9f2fb20082c38cbe47c951ad5839345876e46941612ee87f9a7ce1`)
-  - Each Keepsake GitHub release that ships these binaries is meant to carry the exact source tarballs above as
-    release assets, so the source is available from the same place as the binaries.
+  - Each Keepsake GitHub release that ships the Android binary also carries `libffmpeg-android-sources.tar.gz`
+    (the same tarballs plus the build script) as a release asset, so the source is available from the same place.
 - You may replace the bundled ffmpeg with your own build of FFmpeg. On desktop, replace the `ffmpeg` sidecar file.
   On Android, rebuild the APK with your `libffmpeg.so` in
   `src-tauri/plugins/keepsake-media/android/src/main/jniLibs/arm64-v8a/`.

@@ -93,7 +93,7 @@ yt-dlp browser names (`edge chrome firefox brave chromium opera vivaldi`) whose 
 
 **No ffprobe.** It is not bundled and Keepsake never calls it; yt-dlp falls back to `ffmpeg -i` for probing. The minimal ffmpeg has no video encoders, no network protocols and no HLS/DASH demuxers, so TS never asks for a re-encode or remux.
 
-Android has no Tauri sidecars (`tauri.android.conf.json` sets `"externalBin": []`). The self-contained route instead ships `libqjs.so` and `libffmpeg.so` as jniLibs of the `keepsake-media` plugin (section 3.2), fetched by `scripts/fetch-android-binaries.sh` and pinned in the `android` block of `scripts/binaries.lock.json`.
+Android has no Tauri sidecars (`tauri.android.conf.json` sets `"externalBin": []`). The self-contained route instead ships `libqjs.so` and `libffmpeg.so` as jniLibs of the `keepsake-media` plugin (section 3.2), fetched by `scripts/fetch-android-binaries.sh` and pinned in the `android` block of `scripts/binaries.lock.json`. `libffmpeg.so` is the prebuilt asset of the [ffmpeg-android-minimal-build v1.0.0 release](https://github.com/Abdullah-Masood-05/ffmpeg-android-minimal-build/releases/tag/v1.0.0); its LGPL corresponding source is that release's `libffmpeg-android-sources.tar.gz`.
 
 ### JS runtime and cookie fallback
 - Rust picks the runtime: the bundled `qjs` sidecar (`--js-runtimes quickjs:<absolute path>`) when the file exists; otherwise a user-installed Node, looked up on PATH, then `%ProgramFiles%\nodejs`, `C:\Program Files\nodejs`, `%LOCALAPPDATA%\Programs\nodejs`, `%NVM_SYMLINK%` (Windows) or `/usr/local/bin`, `/usr/bin` (Linux) (`--js-runtimes node:<absolute path>`). The Node fallback must keep working.
